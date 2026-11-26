@@ -983,6 +983,11 @@ const SP_POOL_4CF9_GUARD: usize = 0x004C_F9A2;
 const SP_POOL_4CF9_PROLOGUE: [u8; 7] = [0x85, 0xC0, 0x74, 0x0B, 0x8B, 0x48, 0xF8];
 const SP_POOL_4CF9_AFTER: usize = 0x004C_F9B1;
 
+// Trie::find null-parent `this=0x38` guard (`0x004C8950`: `mov eax, [esp+8]; sub esp, 0x400`)
+const SP_TRIE_4C8950_GUARD: usize = 0x004C_8950;
+const SP_TRIE_4C8950_PROLOGUE: [u8; 10] = [0x8B, 0x44, 0x24, 0x08, 0x81, 0xEC, 0x00, 0x04, 0x00, 0x00];
+const SP_TRIE_4C8950_CONT: usize = 0x004C_895A;
+
 // Trie/allocator ASCII pointer guard (`0x004CF9A6`: `mov ecx, [eax-8]; mov [eax], ecx`)
 const SP_4CF9A6_GUARD: usize = 0x004C_F9A6;
 const SP_4CF9A6_PROLOGUE: [u8; 5] = [0x8B, 0x48, 0xF8, 0x89, 0x08];
@@ -1111,7 +1116,7 @@ pub unsafe fn install(mode: ModeId) -> (usize, usize) {
     let is_console_port = matches!(mode, ModeId::Bf1943 | ModeId::Bfbc1);
     let is_bfbc1 = mode == ModeId::Bfbc1;
     let expected = if is_bfbc1 {
-        188
+        189
     } else if is_console_port {
         6
     } else {
@@ -3151,6 +3156,17 @@ pub unsafe fn install(mode: ModeId) -> (usize, usize) {
                 SP_POOL_4CF9_GUARD,
                 &SP_POOL_4CF9_PROLOGUE,
                 sp_pool_4cf9_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_TRIE_4C8950_GUARD,
+                &SP_TRIE_4C8950_PROLOGUE,
+                sp_trie_4c8950_guard_entry as *const c_void,
             )
         }
         .is_some()
@@ -7117,6 +7133,27 @@ unsafe extern "C" fn sp_pool_4cf9_guard_entry() {
         "push {after}",
         "ret",
         after = const SP_POOL_4CF9_AFTER,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_trie_4c8950_guard_entry() {
+    std::arch::naked_asm!(
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "mov eax, dword ptr [esp + 8]",
+        "sub esp, 0x400",
+        "push {cont}",
+        "ret",
+        "2:",
+        "mov eax, dword ptr [esp + 4]",
+        "cmp eax, 0x10000",
+        "jb 3f",
+        "mov dword ptr [eax], 0",
+        "3:",
+        "ret 8",
+        cont = const SP_TRIE_4C8950_CONT,
     );
 }
 
