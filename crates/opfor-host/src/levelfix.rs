@@ -1018,7 +1018,7 @@ const TRIE_INS_PTR_GUARD: usize = 0x004C_37A0;
 const TRIE_INS_PTR_PROLOGUE: [u8; 6] = [0xF6, 0x45, 0x08, 0x01, 0x75, 0x05];
 const TRIE_INS_PTR_ZERO: usize = 0x004C_37A6;
 const TRIE_INS_PTR_ONE: usize = 0x004C_37AB;
-const TRIE_INS_PTR_END: usize = 0x004C_3800;
+const TRIE_INS_PTR_END: usize = 0x004C_37FC;
 
 // Sibling anim null-arg guards (`0x00A4EF90` & `0x00A4EFB0`)
 const SP_A4EF90_GUARD: usize = 0x00A4_EF90;
@@ -5028,7 +5028,7 @@ unsafe fn trie_node_valid(p: usize) -> bool {
     if p < 0x10000 || p >= 0x7fff_0000 || (p & 3) != 0 {
         return false;
     }
-    if p >= 0x6000_0000 && unsafe { opfor_is_bad_ptr(p) } != 0 {
+    if p >= 0x6000_0000 && unsafe { opfor_is_bad_write_ptr(p) } != 0 {
         return false;
     }
     true
@@ -8391,7 +8391,7 @@ unsafe extern "C" fn trie_find_ptr_guard_entry() {
         "2:",
         "push {notfound}",
         "ret",
-        bad = sym opfor_is_bad_ptr,
+        bad = sym opfor_is_bad_write_ptr,
         cont = const TRIE_FIND_PTR_CONT,
         notfound = const TRIE_FIND_PTR_NOTFOUND,
     );
@@ -8426,7 +8426,7 @@ unsafe extern "C" fn trie_leaf_guard_entry() {
         "2:",
         "xor eax, eax",
         "ret",
-        bad = sym opfor_is_bad_ptr,
+        bad = sym opfor_is_bad_write_ptr,
         cont = const TRIE_LEAF_CONT,
     );
 }
@@ -8695,9 +8695,10 @@ unsafe extern "C" fn trie_ins_ptr_guard_entry() {
         "push {one}",
         "ret",
         "2:",
+        "xor ebp, ebp",
         "push {end}",
         "ret",
-        bad = sym opfor_is_bad_ptr,
+        bad = sym opfor_is_bad_write_ptr,
         zero = const TRIE_INS_PTR_ZERO,
         one = const TRIE_INS_PTR_ONE,
         end = const TRIE_INS_PTR_END,
