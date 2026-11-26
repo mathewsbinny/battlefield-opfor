@@ -7168,6 +7168,7 @@ unsafe extern "C" fn sp_9c4055_guard_entry() {
         "push {cont}",
         "ret",
         "2:",
+        "mov esi, dword ptr [esp + 0x10]",
         "push {exit}",
         "ret",
         cont = const SP_9C4055_CONT,
