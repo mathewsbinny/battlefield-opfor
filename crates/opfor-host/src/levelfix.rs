@@ -970,7 +970,7 @@ const SP_4495E0_CONT: usize = 0x0044_95E7;
 const SP_9C4055_GUARD: usize = 0x009C_4058;
 const SP_9C4055_PROLOGUE: [u8; 6] = [0x8B, 0x7B, 0x10, 0x39, 0x79, 0xF8];
 const SP_9C4055_CONT: usize = 0x009C_405E;
-const SP_9C4055_EXIT: usize = 0x009C_4085;
+const SP_9C4055_EXIT: usize = 0x009C_40CC;
 
 // Null esi guard (`0x004493A3`: `cmp dword ptr [esi+0x10], 0; mov ecx, esi`)
 const SP_4493A3_GUARD: usize = 0x0044_93A3;
