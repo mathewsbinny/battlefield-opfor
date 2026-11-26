@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
-use crate::menu_canvas::{CANVAS_H, CANVAS_W, MenuCanvas, MenuClickAction, RENDER_H, RENDER_W};
+use crate::menu_canvas::{CANVAS_H, CANVAS_W, HitRect, MenuCanvas, MenuClickAction, RENDER_H, RENDER_W};
 use crate::ui_state::{Bf1943Modal, Bf1943Screen, PACIFIC_MAPS, UI_STATE};
 use crate::win32::{self, HWND, LPARAM, WPARAM};
 
@@ -169,6 +169,7 @@ static HOOK_INSTALLED: AtomicBool = AtomicBool::new(false);
 static CANVAS_DIRTY: AtomicBool = AtomicBool::new(true);
 
 static CANVAS: Mutex<Option<MenuCanvas>> = Mutex::new(None);
+static HIT_RECTS: Mutex<Vec<HitRect>> = Mutex::new(Vec::new());
 static GPU_STATE: Mutex<Option<Dx11Blitter>> = Mutex::new(None);
 
 struct Dx11Blitter {
@@ -593,20 +594,32 @@ unsafe fn draw_overlay(swapchain: *mut c_void) {
     let Ok(gpu_guard) = GPU_STATE.lock() else { return };
     let Some(b) = gpu_guard.as_ref() else { return };
 
-    // Re-render GDI+ canvas when dirty OR on our ~33fps animation tick (matching BF1943's 33fps APT)
-    // so plane drift, per-screen parallax, and screen/modal fade transitions animate smoothly.
-    let now = Instant::now();
-    let anim_due = LAST_RENDER
+    // BFBC1 menu is static (event-driven: 0% CPU when idle); BF1943 animates planes/spinner at ~60fps.
+    let needs_anim = UI_STATE
         .lock()
         .ok()
-        .map(|mut last| match *last {
-            Some(prev) if now.duration_since(prev).as_millis() < 30 => false,
-            _ => {
-                *last = Some(now);
-                true
-            }
+        .and_then(|g| {
+            g.as_ref().map(|st| {
+                st.active_era != opfor_vfs::ModeId::Bfbc1 || st.pending_deploy_level.is_some()
+            })
         })
-        .unwrap_or(true);
+        .unwrap_or(false);
+    let now = Instant::now();
+    let anim_due = if needs_anim {
+        LAST_RENDER
+            .lock()
+            .ok()
+            .map(|mut last| match *last {
+                Some(prev) if now.duration_since(prev).as_millis() < 16 => false,
+                _ => {
+                    *last = Some(now);
+                    true
+                }
+            })
+            .unwrap_or(true)
+    } else {
+        false
+    };
     let dirty = CANVAS_DIRTY.swap(false, Ordering::AcqRel);
     if dirty || anim_due {
         let elapsed_secs = ANIM_CLOCK
@@ -616,6 +629,10 @@ unsafe fn draw_overlay(swapchain: *mut c_void) {
         if let (Ok(mut c_guard), Ok(st_guard)) = (CANVAS.lock(), UI_STATE.lock()) {
             if let (Some(canvas), Some(st)) = (c_guard.as_mut(), st_guard.as_ref()) {
                 canvas.render(st, elapsed_secs);
+                if let Ok(mut hr) = HIT_RECTS.lock() {
+                    hr.clear();
+                    hr.extend_from_slice(&canvas.hit_rects);
+                }
                 // ID3D11DeviceContext::UpdateSubresource = vtable[48]
                 type UpdateSubFn = unsafe extern "system" fn(
                     *mut c_void,
@@ -754,10 +771,11 @@ unsafe extern "system" fn hook_wndproc(
                 let ly = ((lparam >> 16) & 0xFFFF) as i16 as f32;
                 let mx = (lx / cw) * (CANVAS_W as f32);
                 let my = (ly / ch) * (CANVAS_H as f32);
-                let hovered = CANVAS.lock().ok().and_then(|g| {
-                    g.as_ref()
-                        .and_then(|c| c.hit_rects.iter().find(|r| r.contains(mx, my)).map(|r| r.action))
-                });
+                let hovered = HIT_RECTS
+                    .lock()
+                    .ok()
+                    .and_then(|hr| hr.iter().find(|r| r.contains(mx, my)).map(|r| r.action));
+                let mut changed = false;
                 if let Ok(mut g) = UI_STATE.lock() {
                     if let Some(st) = g.as_mut() {
                         st.mouse_x = mx;
@@ -767,9 +785,14 @@ unsafe extern "system" fn hook_wndproc(
                                 if st.cursor_idx != i {
                                     st.cursor_idx = i;
                                     play_ui_sfx("ui_scroll.wav");
+                                    changed = true;
                                 }
                                 if st.screen == Bf1943Screen::OfflineMatches {
-                                    st.bf1943_selected_map = i.min(PACIFIC_MAPS.len() - 1);
+                                    let clamped = i.min(PACIFIC_MAPS.len() - 1);
+                                    if st.bf1943_selected_map != clamped {
+                                        st.bf1943_selected_map = clamped;
+                                        changed = true;
+                                    }
                                 }
                             }
                             Some(MenuClickAction::ModalRowActivate(r))
@@ -777,13 +800,16 @@ unsafe extern "system" fn hook_wndproc(
                                 if st.modal_cursor != r {
                                     st.modal_cursor = r;
                                     play_ui_sfx("ui_scroll.wav");
+                                    changed = true;
                                 }
                             }
                             _ => {}
                         }
                     }
                 }
-                mark_dirty();
+                if changed {
+                    mark_dirty();
+                }
                 return 0;
             }
             WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
@@ -792,10 +818,10 @@ unsafe extern "system" fn hook_wndproc(
                     .ok()
                     .and_then(|g| g.as_ref().map(|s| (s.mouse_x, s.mouse_y)))
                     .unwrap_or((0.0, 0.0));
-                let clicked = CANVAS.lock().ok().and_then(|g| {
-                    g.as_ref()
-                        .and_then(|c| c.hit_rects.iter().find(|r| r.contains(mx, my)).map(|r| r.action))
-                });
+                let clicked = HIT_RECTS
+                    .lock()
+                    .ok()
+                    .and_then(|hr| hr.iter().find(|r| r.contains(mx, my)).map(|r| r.action));
                 if let Some(act) = clicked {
                     if let Ok(mut g) = UI_STATE.lock() {
                         if let Some(st) = g.as_mut() {

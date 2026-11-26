@@ -21,11 +21,11 @@ use crate::win32;
 
 pub const CANVAS_W: u32 = 1280;
 pub const CANVAS_H: u32 = 720;
-/// Backing raster resolution (2560x1440 QHD — 2x supersampled over the 1280x720 logical layout)
-/// so both BF1943 and BFBC1 menus render razor-sharp vector text & crisp UI edges on 1080p/1440p/4K displays.
-pub const RENDER_SCALE: u32 = 2;
-pub const RENDER_W: u32 = CANVAS_W * RENDER_SCALE;
-pub const RENDER_H: u32 = CANVAS_H * RENDER_SCALE;
+/// Backing raster resolution (1920x1080 Full HD — 1.5x over the 1280x720 logical layout)
+/// balancing razor-sharp vector text with fast frame times & low PCIe upload bandwidth.
+pub const RENDER_SCALE_F: f32 = 1.5;
+pub const RENDER_W: u32 = 1920;
+pub const RENDER_H: u32 = 1080;
 
 const PIXEL_FORMAT_32BPP_ARGB: i32 = 0x0026_200A;
 const FONT_STYLE_REGULAR: i32 = 0;
@@ -454,6 +454,10 @@ impl Bf1943BitmapFont {
 pub struct MenuCanvas {
     pub pixels: Vec<u8>,
     pub hit_rects: Vec<HitRect>,
+    /// Pre-rasterized 1920x1080 BF1943 sky backdrop (with paper grain baked in once at startup).
+    backdrop_pixels: Vec<u8>,
+    /// Pre-rasterized 1920x1080 BFBC1 backdrop (with tactical vignette baked in once at startup).
+    bc1_backdrop_pixels: Vec<u8>,
     backdrop_img: *mut c_void,
     bc1_backdrop_img: *mut c_void,
     logo_img: *mut c_void,
@@ -606,9 +610,86 @@ impl MenuCanvas {
         let body_font = Self::load_font_family(&["Bahnschrift", "Arial Narrow", "Segoe UI", "Arial"]);
         let italic_font = Self::load_font_family(&["Century Schoolbook", "Georgia", "Times New Roman"]);
 
+        // Pre-rasterize BF1943 backdrop + `paper_grain.png` once at startup (avoids ~50ms per-frame
+        // HighQualityBicubic scaling + per-pixel grain multiply on every Present()).
+        let mut backdrop_pixels = vec![0u8; (RENDER_W * RENDER_H * 4) as usize];
+        {
+            let mut bmp = std::ptr::null_mut();
+            if unsafe {
+                GdipCreateBitmapFromScan0(
+                    RENDER_W as i32,
+                    RENDER_H as i32,
+                    (RENDER_W * 4) as i32,
+                    PIXEL_FORMAT_32BPP_ARGB,
+                    backdrop_pixels.as_mut_ptr(),
+                    &mut bmp,
+                )
+            } == 0
+                && !bmp.is_null()
+            {
+                let mut gg = std::ptr::null_mut();
+                if unsafe { GdipGetImageGraphicsContext(bmp, &mut gg) } == 0 && !gg.is_null() {
+                    unsafe {
+                        GdipSetInterpolationMode(gg, 7);
+                        GdipGraphicsClear(gg, SKY_FALLBACK);
+                        if !backdrop_img.is_null() {
+                            GdipDrawImageRect(gg, backdrop_img, 0.0, 0.0, RENDER_W as f32, RENDER_H as f32);
+                        }
+                        GdipDeleteGraphics(gg);
+                    }
+                }
+                unsafe { GdipDisposeImage(bmp) };
+            }
+            if grain_luma.len() == (RENDER_W * RENDER_H) as usize {
+                for (px, &gl) in backdrop_pixels.chunks_exact_mut(4).zip(grain_luma.iter()) {
+                    let m = 214u32 + ((u32::from(gl) * 42) >> 8);
+                    px[0] = ((u32::from(px[0]) * m) >> 8) as u8;
+                    px[1] = ((u32::from(px[1]) * m) >> 8) as u8;
+                    px[2] = ((u32::from(px[2]) * m) >> 8) as u8;
+                }
+            }
+        }
+
+        // Pre-rasterize BFBC1 backdrop + dark tactical vignette once at startup.
+        let mut bc1_backdrop_pixels = vec![0u8; (RENDER_W * RENDER_H * 4) as usize];
+        {
+            let mut bmp = std::ptr::null_mut();
+            if unsafe {
+                GdipCreateBitmapFromScan0(
+                    RENDER_W as i32,
+                    RENDER_H as i32,
+                    (RENDER_W * 4) as i32,
+                    PIXEL_FORMAT_32BPP_ARGB,
+                    bc1_backdrop_pixels.as_mut_ptr(),
+                    &mut bmp,
+                )
+            } == 0
+                && !bmp.is_null()
+            {
+                let mut gg = std::ptr::null_mut();
+                if unsafe { GdipGetImageGraphicsContext(bmp, &mut gg) } == 0 && !gg.is_null() {
+                    unsafe {
+                        GdipSetInterpolationMode(gg, 7);
+                        GdipGraphicsClear(gg, 0xFF10_1310);
+                        if !bc1_backdrop_img.is_null() {
+                            GdipDrawImageRect(gg, bc1_backdrop_img, 0.0, 0.0, RENDER_W as f32, RENDER_H as f32);
+                        }
+                        GdipScaleWorldTransform(gg, RENDER_SCALE_F, RENDER_SCALE_F, 0);
+                        Self::fill_rect(gg, argb(175, 14, 17, 14), 0.0, 0.0, CANVAS_W as f32, CANVAS_H as f32);
+                        Self::fill_rect(gg, argb(210, 12, 14, 12), 0.0, 0.0, 510.0, CANVAS_H as f32);
+                        Self::fill_rect(gg, 0xFFE0_A82E, 0.0, 0.0, 6.0, CANVAS_H as f32);
+                        GdipDeleteGraphics(gg);
+                    }
+                }
+                unsafe { GdipDisposeImage(bmp) };
+            }
+        }
+
         Self {
             pixels: vec![0u8; (RENDER_W * RENDER_H * 4) as usize],
             hit_rects: Vec::with_capacity(48),
+            backdrop_pixels,
+            bc1_backdrop_pixels,
             backdrop_img,
             bc1_backdrop_img,
             logo_img,
@@ -1047,6 +1128,13 @@ impl MenuCanvas {
         let c_dx = (elapsed_secs * 0.48).cos() * 18.0 + (elapsed_secs * 0.95).sin() * 4.0;
         let c_dy = (elapsed_secs * 0.63).sin() * 10.0 + (elapsed_secs * 1.25).cos() * 2.5;
 
+        // Fast memcpy of pre-baked 1080p backdrop (avoids full-screen GDI+ bicubic scaling every frame)
+        if st.active_era == opfor_vfs::ModeId::Bfbc1 {
+            self.pixels.copy_from_slice(&self.bc1_backdrop_pixels);
+        } else {
+            self.pixels.copy_from_slice(&self.backdrop_pixels);
+        }
+
         let mut bmp = std::ptr::null_mut();
         let rc = unsafe {
             GdipCreateBitmapFromScan0(
@@ -1068,10 +1156,10 @@ impl MenuCanvas {
         }
         unsafe {
             GdipSetSmoothingMode(g, 4);
-            GdipSetInterpolationMode(g, 7);
+            // Bilinear (3) instead of HighQualityBicubic (7) for fast 60+ FPS live sprite draws
+            GdipSetInterpolationMode(g, 3);
             GdipSetTextRenderingHint(g, 4);
-            GdipScaleWorldTransform(g, RENDER_SCALE as f32, RENDER_SCALE as f32, 0);
-            GdipGraphicsClear(g, SKY_FALLBACK);
+            GdipScaleWorldTransform(g, RENDER_SCALE_F, RENDER_SCALE_F, 0);
         }
 
         // Dispatch Battlefield: Bad Company 1 native front-end menu when ModeId::Bfbc1 is active
@@ -1084,12 +1172,7 @@ impl MenuCanvas {
             return;
         }
 
-        // 1. Full-bleed literal Xbox 360 BF1943 Pacific Sky + Drifting A6M Zero + Banking F4U Corsair
-        if !self.backdrop_img.is_null() {
-            unsafe {
-                GdipDrawImageRect(g, self.backdrop_img, 0.0, 0.0, CANVAS_W as f32, CANVAS_H as f32);
-            }
-        }
+        // 1. Drifting A6M Zero + Banking F4U Corsair (sky + paper grain already blitted via backdrop_pixels)
         if !self.zero_img.is_null() {
             unsafe {
                 GdipDrawImageRect(
@@ -1157,24 +1240,9 @@ impl MenuCanvas {
             GdipDisposeImage(bmp);
         }
 
-        // 5. Subtle BF1943 `mc_raster` paper-grain multiply pass (~16% strength so small text stays crisp) + initial boot fade-in
-        let has_grain = self.grain_luma.len() == (RENDER_W * RENDER_H) as usize;
+        // 5. Initial 0.45s boot fade-in only (paper grain is pre-baked into backdrop_pixels)
         let boot_scale = (boot_fade * 256.0).clamp(0.0, 256.0) as u32;
-        if has_grain && boot_scale >= 256 {
-            for (px, &gl) in self.pixels.chunks_exact_mut(4).zip(self.grain_luma.iter()) {
-                let m = 214u32 + ((u32::from(gl) * 42) >> 8);
-                px[0] = ((u32::from(px[0]) * m) >> 8) as u8;
-                px[1] = ((u32::from(px[1]) * m) >> 8) as u8;
-                px[2] = ((u32::from(px[2]) * m) >> 8) as u8;
-            }
-        } else if has_grain {
-            for (px, &gl) in self.pixels.chunks_exact_mut(4).zip(self.grain_luma.iter()) {
-                let m = ((214u32 + ((u32::from(gl) * 42) >> 8)) * boot_scale) >> 8;
-                px[0] = ((u32::from(px[0]) * m) >> 8) as u8;
-                px[1] = ((u32::from(px[1]) * m) >> 8) as u8;
-                px[2] = ((u32::from(px[2]) * m) >> 8) as u8;
-            }
-        } else if boot_scale < 256 {
+        if boot_scale < 256 {
             for px in self.pixels.chunks_exact_mut(4) {
                 px[0] = ((u32::from(px[0]) * boot_scale) >> 8) as u8;
                 px[1] = ((u32::from(px[1]) * boot_scale) >> 8) as u8;
@@ -2331,17 +2399,7 @@ impl MenuCanvas {
         const BC1_OLIVE_PANEL: u32 = 0xD818_1C17;
         const BC1_CARD: u32 = 0xCC1E_231D;
         const BC1_SUBTEXT: u32 = 0xFFB8_C0B2;
-
-        unsafe {
-            GdipGraphicsClear(g, BC1_BG);
-            if !self.bc1_backdrop_img.is_null() {
-                GdipDrawImageRect(g, self.bc1_backdrop_img, 0.0, 0.0, CANVAS_W as f32, CANVAS_H as f32);
-            }
-        }
-        // Dark tactical vignette over backdrop for sharp stencil legibility
-        Self::fill_rect(g, argb(175, 14, 17, 14), 0.0, 0.0, CANVAS_W as f32, CANVAS_H as f32);
-        Self::fill_rect(g, argb(210, 12, 14, 12), 0.0, 0.0, 510.0, CANVAS_H as f32);
-        Self::fill_rect(g, BC1_GOLD, 0.0, 0.0, 6.0, CANVAS_H as f32);
+        // Backdrop + dark tactical vignette + gold accent stripe are already pre-baked into bc1_backdrop_pixels.
 
         // Header brand bar
         Self::draw_text_ex(
