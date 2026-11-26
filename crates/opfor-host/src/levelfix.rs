@@ -1354,6 +1354,31 @@ const SP_AEC8C0_GUARD: usize = 0x00AE_C8C0;
 const SP_AEC8C0_PROLOGUE: [u8; 6] = [0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF0];
 const SP_AEC8C0_CONT: usize = 0x00AE_C8C6;
 
+// SP ResourceManager sync-wait spin-loop timeout (`0x004B86B3`: `cmp byte [esp+0x15], 0; je 0x4b86c7`)
+// Prevents permanent main-thread deadlock when a missing/failed BFBC1 resource never sets `[esi+0x25] & 4`.
+const SP_4B86B3_GUARD: usize = 0x004B_86B3;
+const SP_4B86B3_PROLOGUE: [u8; 7] = [0x80, 0x7C, 0x24, 0x15, 0x00, 0x74, 0x0D];
+const SP_4B86B3_DONE: usize = 0x004B_86C7;
+
+// SP ANT animation asset null-resource guard (`0x00F632DB`: `mov ecx, [eax]; mov ecx, [ecx+8]`)
+const SP_F632DB_GUARD: usize = 0x00F6_32DB;
+const SP_F632DB_PROLOGUE: [u8; 5] = [0x8B, 0x08, 0x8B, 0x49, 0x08];
+const SP_F632DB_CONT: usize = 0x00F6_32E0;
+
+// SP ANT animation loop null-entry guard (`0x00F69B84`: `mov eax, [edi+eax*4]; mov ecx, [eax+8]`)
+const SP_F69B84_GUARD: usize = 0x00F6_9B84;
+const SP_F69B84_PROLOGUE: [u8; 6] = [0x8B, 0x04, 0x87, 0x8B, 0x48, 0x08];
+const SP_F69B84_CONT: usize = 0x00F6_9B8A;
+const SP_F69B84_SKIP: usize = 0x00F6_9BD9;
+
+// SP UIIngame Flash-ready fallback (`0x0095666E`: `cmp byte [eax+0x272bc], 0`)
+// If a ported BFBC1 HUD SWF never fires BFBC2's ready fscommand within 120 frames (~2s),
+// mark UIIngame ready so UIManager stops waiting 1,000,000 frames and dismisses the loading screen.
+const SP_95666E_GUARD: usize = 0x0095_666E;
+const SP_95666E_PROLOGUE: [u8; 7] = [0x80, 0xB8, 0xBC, 0x72, 0x02, 0x00, 0x00];
+const SP_95666E_READY: usize = 0x0095_6677;
+const SP_95666E_WAIT: usize = 0x0095_668C;
+
 // Resource ref-list corrupted `esi` guard (`0x004968C0`: `mov eax, [esi+0xc]; test eax, eax`)
 const SP_LIST_4968_GUARD: usize = 0x0049_68C0;
 const SP_LIST_4968_PROLOGUE: [u8; 5] = [0x8B, 0x46, 0x0C, 0x85, 0xC0];
@@ -1553,7 +1578,7 @@ pub unsafe fn install(mode: ModeId) -> (usize, usize) {
     let is_console_port = matches!(mode, ModeId::Bf1943 | ModeId::Bfbc1);
     let is_bfbc1 = mode == ModeId::Bfbc1;
     let expected = if is_bfbc1 {
-        268
+        272
     } else if is_console_port {
         6
     } else {
@@ -4318,6 +4343,50 @@ pub unsafe fn install(mode: ModeId) -> (usize, usize) {
                 SP_AEC8C0_GUARD,
                 &SP_AEC8C0_PROLOGUE,
                 sp_aec8c0_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_4B86B3_GUARD,
+                &SP_4B86B3_PROLOGUE,
+                sp_4b86b3_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_F632DB_GUARD,
+                &SP_F632DB_PROLOGUE,
+                sp_f632db_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_F69B84_GUARD,
+                &SP_F69B84_PROLOGUE,
+                sp_f69b84_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_95666E_GUARD,
+                &SP_95666E_PROLOGUE,
+                sp_95666e_guard_entry as *const c_void,
             )
         }
         .is_some()
@@ -10525,6 +10594,92 @@ unsafe extern "C" fn sp_aec8c0_guard_entry() {
         "xor eax, eax",
         "ret",
         cont = const SP_AEC8C0_CONT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_4b86b3_guard_entry() {
+    std::arch::naked_asm!(
+        "cmp byte ptr [esp + 0x15], 0",
+        "je 3f",
+        "push ebx",
+        "mov ebx, 15",
+        "2:",
+        "mov eax, 0x00509140",
+        "call eax",
+        "test byte ptr [esi + 0x25], 4",
+        "jnz 4f",
+        "dec ebx",
+        "jnz 2b",
+        "4:",
+        "pop ebx",
+        "3:",
+        "push {done}",
+        "ret",
+        done = const SP_4B86B3_DONE,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_f632db_guard_entry() {
+    std::arch::naked_asm!(
+        "mov ecx, dword ptr [eax]",
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "mov ecx, dword ptr [ecx + 8]",
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "push {cont}",
+        "ret",
+        "2:",
+        "pop edi",
+        "pop esi",
+        "xor eax, eax",
+        "add esp, 0x1c",
+        "ret",
+        cont = const SP_F632DB_CONT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_f69b84_guard_entry() {
+    std::arch::naked_asm!(
+        "mov eax, dword ptr [edi + eax*4]",
+        "cmp eax, 0x10000",
+        "jb 2f",
+        "mov ecx, dword ptr [eax + 8]",
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "push {cont}",
+        "ret",
+        "2:",
+        "push {skip}",
+        "ret",
+        cont = const SP_F69B84_CONT,
+        skip = const SP_F69B84_SKIP,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_95666e_guard_entry() {
+    std::arch::naked_asm!(
+        "cmp byte ptr [eax + 0x272bc], 0",
+        "jne 3f",
+        "cmp dword ptr [esi + 0xc3eb4], 0xF41C8",
+        "ja 2f",
+        "mov byte ptr [eax + 0x272bc], 1",
+        "3:",
+        "push {ready}",
+        "ret",
+        "2:",
+        "push {wait}",
+        "ret",
+        ready = const SP_95666E_READY,
+        wait = const SP_95666E_WAIT,
     );
 }
 
