@@ -1313,6 +1313,16 @@ const SP_43D5C5_PROLOGUE: [u8; 5] = [0x8B, 0x4E, 0x04, 0x8B, 0x01];
 const SP_43D5C5_CONT: usize = 0x0043_D5CA;
 const SP_43D5C5_SKIP: usize = 0x0043_D5CF;
 
+// SP Havok `hkpWorld::removeEntity` unmapped/freed `this` guard (`0x00CB22B0`: `sub esp, 8; push esi; mov esi, ecx`, `ret 4`)
+const SP_CB22B0_GUARD: usize = 0x00CB_22B0;
+const SP_CB22B0_PROLOGUE: [u8; 6] = [0x83, 0xEC, 0x08, 0x56, 0x8B, 0xF1];
+const SP_CB22B0_CONT: usize = 0x00CB_22B6;
+
+// SP case-insensitive `stricmp` bad-pointer guard (`0x00508220`: `mov edx, [esp+8]; push esi`)
+const SP_508220_GUARD: usize = 0x0050_8220;
+const SP_508220_PROLOGUE: [u8; 5] = [0x8B, 0x54, 0x24, 0x08, 0x56];
+const SP_508220_CONT: usize = 0x0050_8225;
+
 // Resource ref-list corrupted `esi` guard (`0x004968C0`: `mov eax, [esi+0xc]; test eax, eax`)
 const SP_LIST_4968_GUARD: usize = 0x0049_68C0;
 const SP_LIST_4968_PROLOGUE: [u8; 5] = [0x8B, 0x46, 0x0C, 0x85, 0xC0];
@@ -1512,7 +1522,7 @@ pub unsafe fn install(mode: ModeId) -> (usize, usize) {
     let is_console_port = matches!(mode, ModeId::Bf1943 | ModeId::Bfbc1);
     let is_bfbc1 = mode == ModeId::Bfbc1;
     let expected = if is_bfbc1 {
-        260
+        262
     } else if is_console_port {
         6
     } else {
@@ -4190,6 +4200,28 @@ pub unsafe fn install(mode: ModeId) -> (usize, usize) {
                 SP_43D5C5_GUARD,
                 &SP_43D5C5_PROLOGUE,
                 sp_43d5c5_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_CB22B0_GUARD,
+                &SP_CB22B0_PROLOGUE,
+                sp_cb22b0_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_508220_GUARD,
+                &SP_508220_PROLOGUE,
+                sp_508220_guard_entry as *const c_void,
             )
         }
         .is_some()
@@ -9831,6 +9863,80 @@ unsafe extern "C" fn sp_43d5c5_guard_entry() {
         "ret",
         cont = const SP_43D5C5_CONT,
         skip = const SP_43D5C5_SKIP,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_cb22b0_guard_entry() {
+    std::arch::naked_asm!(
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "push eax",
+        "push ecx",
+        "push edx",
+        "lea eax, [ecx + 0x84]",
+        "push eax",
+        "call {bad}",
+        "add esp, 4",
+        "test eax, eax",
+        "pop edx",
+        "pop ecx",
+        "pop eax",
+        "jnz 2f",
+        "sub esp, 8",
+        "push esi",
+        "mov esi, ecx",
+        "push {cont}",
+        "ret",
+        "2:",
+        "ret 4",
+        bad = sym opfor_is_bad_write_ptr,
+        cont = const SP_CB22B0_CONT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_508220_guard_entry() {
+    std::arch::naked_asm!(
+        "mov eax, dword ptr [esp + 4]",
+        "mov edx, dword ptr [esp + 8]",
+        "cmp eax, 0x10000",
+        "jb 2f",
+        "cmp eax, 0x60000000",
+        "jb 3f",
+        "push edx",
+        "push eax",
+        "call {bad}",
+        "add esp, 4",
+        "test eax, eax",
+        "pop edx",
+        "jnz 2f",
+        "3:",
+        "cmp edx, 0x10000",
+        "jb 4f",
+        "cmp edx, 0x60000000",
+        "jb 5f",
+        "push edx",
+        "push edx",
+        "call {bad}",
+        "add esp, 4",
+        "test eax, eax",
+        "pop edx",
+        "jnz 4f",
+        "5:",
+        "push esi",
+        "push {cont}",
+        "ret",
+        "2:",
+        "mov eax, -1",
+        "ret",
+        "4:",
+        "mov eax, 1",
+        "ret",
+        bad = sym opfor_is_bad_ptr,
+        cont = const SP_508220_CONT,
     );
 }
 
