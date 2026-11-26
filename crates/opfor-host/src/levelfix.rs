@@ -955,6 +955,203 @@ const TRIE_LEAF_GUARD: usize = 0x004B_CBC2;
 const TRIE_LEAF_PROLOGUE: [u8; 8] = [0x8B, 0xC1, 0x83, 0xE0, 0xFC, 0x8B, 0x48, 0x08];
 const TRIE_LEAF_CONT: usize = 0x004B_CBCA;
 
+// TrieNode::next parent-cycle guard (`0x004BCBA3`: `mov edx, [ecx+0xc]; test edx, edx`)
+const TRIE_NEXT_CYCLE_GUARD: usize = 0x004B_CBA3;
+const TRIE_NEXT_CYCLE_PROLOGUE: [u8; 5] = [0x8B, 0x51, 0x0C, 0x85, 0xD2];
+const TRIE_NEXT_CYCLE_CONT: usize = 0x004B_CBA8;
+const TRIE_NEXT_CYCLE_DONE: usize = 0x004B_CBD4;
+
+// SP slot-0 null fallback guard (`0x006B697B`: `mov eax, [eax+0x14]; cmp eax, ebp`)
+const SP_6B697B_GUARD: usize = 0x006B_697B;
+const SP_6B697B_PROLOGUE: [u8; 5] = [0x8B, 0x40, 0x14, 0x3B, 0xC5];
+const SP_6B697B_CONT: usize = 0x006B_6980;
+const SP_6B697B_SKIP: usize = 0x006B_69F4;
+
+// SP physics `[edi+0x44]` null guards (`0x00B025D1` & `0x00B025EE`)
+const SP_B025D1_GUARD: usize = 0x00B0_25D1;
+const SP_B025D1_PROLOGUE: [u8; 8] = [0x8B, 0x4F, 0x44, 0xE8, 0x97, 0xE5, 0x23, 0x00];
+const SP_B025D1_CONT: usize = 0x00B0_25D9;
+
+const SP_B025EE_GUARD: usize = 0x00B0_25EE;
+const SP_B025EE_PROLOGUE: [u8; 6] = [0x8B, 0x57, 0x44, 0xD9, 0x42, 0x2C];
+const SP_B025EE_CONT: usize = 0x00B0_25F4;
+const SP_B025EE_SKIP: usize = 0x00B0_2633;
+
+const SP_B02651_GUARD: usize = 0x00B0_2651;
+const SP_B02651_PROLOGUE: [u8; 6] = [0x8B, 0x4F, 0x44, 0xD9, 0x41, 0x50];
+const SP_B02651_CONT: usize = 0x00B0_2657;
+
+// SP slot-0 null fallback guard #2 (`0x0069F302`: `test esi, esi; jne +2; mov esi, [ecx]`)
+const SP_69F302_GUARD: usize = 0x0069_F302;
+const SP_69F302_PROLOGUE: [u8; 6] = [0x85, 0xF6, 0x75, 0x02, 0x8B, 0x31];
+const SP_69F302_CONT: usize = 0x0069_F308;
+const SP_69F302_EXIT: usize = 0x0069_F34A;
+
+// SP slot-0 null fallback guard #3 (`0x0069F256`: `test edi, edi; jne +2; mov edi, [ecx]`)
+const SP_69F256_GUARD: usize = 0x0069_F256;
+const SP_69F256_PROLOGUE: [u8; 6] = [0x85, 0xFF, 0x75, 0x02, 0x8B, 0x39];
+const SP_69F256_CONT: usize = 0x0069_F25C;
+const SP_69F256_EXIT: usize = 0x0069_F2AF;
+
+// SP anim init null `[ebx]` guard #0 (`0x00F6C0D1`: `mov eax, [ebx]; cmp [eax+0x54], edi`)
+const SP_ANIM_INIT0_GUARD: usize = 0x00F6_C0D1;
+const SP_ANIM_INIT0_PROLOGUE: [u8; 5] = [0x8B, 0x03, 0x39, 0x78, 0x54];
+const SP_ANIM_INIT0_CONT: usize = 0x00F6_C0D6;
+const SP_ANIM_INIT0_SKIP: usize = 0x00F6_C112;
+
+// SP anim null-arg guard (`0x00A4F800`: `push esi; mov esi, [esp+8]; cmp [esi+4], 0`)
+const SP_A4F800_GUARD: usize = 0x00A4_F800;
+const SP_A4F800_PROLOGUE: [u8; 5] = [0x56, 0x8B, 0x74, 0x24, 0x08];
+const SP_A4F800_CONT: usize = 0x00A4_F805;
+
+// Frostbite free() corrupt/unaligned pointer guard (`0x0041B8B0`: `push esi; mov esi, [esp+8]`)
+const SP_FREE_41B8B0_GUARD: usize = 0x0041_B8B0;
+const SP_FREE_41B8B0_PROLOGUE: [u8; 5] = [0x56, 0x8B, 0x74, 0x24, 0x08];
+const SP_FREE_41B8B0_CONT: usize = 0x0041_B8B5;
+
+// Anim resource getter null-this guard (`0x00F36B80`: `mov eax, [ecx+0x10]; ret; int3`)
+const SP_F36B80_GUARD: usize = 0x00F3_6B80;
+const SP_F36B80_PROLOGUE: [u8; 5] = [0x8B, 0x41, 0x10, 0xC3, 0xCC];
+
+// Trie::insert corrupted child-node pointer guard (`0x004C37A0`: `test byte [ebp+8], 1; jne +5`)
+const TRIE_INS_PTR_GUARD: usize = 0x004C_37A0;
+const TRIE_INS_PTR_PROLOGUE: [u8; 6] = [0xF6, 0x45, 0x08, 0x01, 0x75, 0x05];
+const TRIE_INS_PTR_ZERO: usize = 0x004C_37A6;
+const TRIE_INS_PTR_ONE: usize = 0x004C_37AB;
+const TRIE_INS_PTR_END: usize = 0x004C_3800;
+
+// Sibling anim null-arg guards (`0x00A4EF90` & `0x00A4EFB0`)
+const SP_A4EF90_GUARD: usize = 0x00A4_EF90;
+const SP_A4EF90_PROLOGUE: [u8; 8] = [0x8B, 0x44, 0x24, 0x04, 0x8B, 0x40, 0x04, 0xC3];
+
+const SP_A4EFB0_GUARD: usize = 0x00A4_EFB0;
+const SP_A4EFB0_PROLOGUE: [u8; 7] = [0x8B, 0x54, 0x24, 0x04, 0x8B, 0x4A, 0x24];
+const SP_A4EFB0_CONT: usize = 0x00A4_EFB7;
+
+// SP anim init null `eax` guard (`0x00F6C449`: `mov edx, [esi+0x18]; mov ecx, [eax+4]`)
+const SP_F6C449_GUARD: usize = 0x00F6_C449;
+const SP_F6C449_PROLOGUE: [u8; 6] = [0x8B, 0x56, 0x18, 0x8B, 0x48, 0x04];
+const SP_F6C449_CONT: usize = 0x00F6_C44F;
+const SP_F6C449_SKIP: usize = 0x00F6_C458;
+
+// StringBuilder bounds-check guards (`0x00507F80`, `0x00507FB0`, `0x00507FD0`) — stops stack buffer overflow
+const SP_STRBUF_7F80_GUARD: usize = 0x0050_7F80;
+const SP_STRBUF_7F80_PROLOGUE: [u8; 7] = [0x8B, 0x41, 0x04, 0x8A, 0x54, 0x24, 0x04];
+
+const SP_STRBUF_7FB0_GUARD: usize = 0x0050_7FB0;
+const SP_STRBUF_7FB0_PROLOGUE: [u8; 6] = [0x8A, 0x54, 0x24, 0x04, 0x8B, 0xC1];
+
+const SP_STRBUF_7FD0_GUARD: usize = 0x0050_7FD0;
+const SP_STRBUF_7FD0_PROLOGUE: [u8; 6] = [0x8B, 0xC1, 0x8B, 0x4C, 0x24, 0x04];
+
+// SP anim update null `[ecx]` guard (`0x00F5CC10`: `mov edx, [ecx]; mov ecx, [edx+0x3c]`)
+const SP_F5CC10_GUARD: usize = 0x00F5_CC10;
+const SP_F5CC10_PROLOGUE: [u8; 5] = [0x8B, 0x11, 0x8B, 0x4A, 0x3C];
+const SP_F5CC10_CONT: usize = 0x00F5_CC15;
+
+// SP anim update null `[eax]` guard (`0x00F62BA1`: `mov edx, [eax]; mov eax, [edx+0x38]`)
+const SP_F62BA1_GUARD: usize = 0x00F6_2BA1;
+const SP_F62BA1_PROLOGUE: [u8; 5] = [0x8B, 0x10, 0x8B, 0x42, 0x38];
+const SP_F62BA1_CONT: usize = 0x00F6_2BA6;
+const SP_F62BA1_SKIP: usize = 0x00F6_2C5B;
+
+// SP anim update null `[eax]` guard #2 (`0x00F6B52B`: `mov ecx, [eax]; cmp byte [ecx+0x7c], 0`)
+const SP_F6B52B_GUARD: usize = 0x00F6_B52B;
+const SP_F6B52B_PROLOGUE: [u8; 6] = [0x8B, 0x08, 0x80, 0x79, 0x7C, 0x00];
+const SP_F6B52B_CONT: usize = 0x00F6_B531;
+const SP_F6B52B_SKIP: usize = 0x00F6_B57F;
+
+// SP anim stat-counter null `eax` guard (`0x00F689F9`: `mov eax, [eax+4]; add [0x18a4bb0], eax`)
+const SP_F689F9_GUARD: usize = 0x00F6_89F9;
+const SP_F689F9_PROLOGUE: [u8; 9] = [0x8B, 0x40, 0x04, 0x01, 0x05, 0xB0, 0x4B, 0x8A, 0x01];
+const SP_F689F9_CONT: usize = 0x00F6_8A02;
+const SP_F689F9_SKIP: usize = 0x00F6_8A15;
+
+// SP anim null-arg guard (`0x00A4F020`: `push esi; push edi; mov edi, [esp+0xc]`)
+const SP_A4F020_GUARD: usize = 0x00A4_F020;
+const SP_A4F020_PROLOGUE: [u8; 6] = [0x56, 0x57, 0x8B, 0x7C, 0x24, 0x0C];
+const SP_A4F020_CONT: usize = 0x00A4_F026;
+
+// SP anim null `eax` guard #2 (`0x00F68CC4`: `mov edx, [esp+0x20]; mov ecx, [eax+4]`)
+const SP_F68CC4_GUARD: usize = 0x00F6_8CC4;
+const SP_F68CC4_PROLOGUE: [u8; 7] = [0x8B, 0x54, 0x24, 0x20, 0x8B, 0x48, 0x04];
+const SP_F68CC4_CONT: usize = 0x00F6_8CCB;
+const SP_F68CC4_SKIP: usize = 0x00F6_8CD7;
+
+// SP anim resource lookup invalid `[eax]` guard (`0x00F42EEA`: `mov ecx, [eax]; mov edx, [ecx]; mov eax, [edx]`)
+const SP_F42EEA_GUARD: usize = 0x00F4_2EEA;
+const SP_F42EEA_PROLOGUE: [u8; 6] = [0x8B, 0x08, 0x8B, 0x11, 0x8B, 0x02];
+const SP_F42EEA_CONT: usize = 0x00F4_2EF0;
+const SP_F42EEA_SKIP: usize = 0x00F4_2F58;
+
+// SP resource lookup corrupt `[esp+0x850]` guard (`0x004B2ED3`: `mov ecx, [esp+0x850]; mov eax, [ecx]`)
+const SP_4B2ED3_GUARD: usize = 0x004B_2ED3;
+const SP_4B2ED3_PROLOGUE: [u8; 9] = [0x8B, 0x8C, 0x24, 0x50, 0x08, 0x00, 0x00, 0x8B, 0x01];
+const SP_4B2ED3_CONT: usize = 0x004B_2EDC;
+const SP_4B2ED3_SKIP: usize = 0x004B_2F2A;
+
+// SP anim entry ctor invalid `[eax]` guard (`0x00F68D8C`: `mov ecx, [eax]; mov edx, [ecx]; mov eax, [edx]`)
+const SP_F68D8C_GUARD: usize = 0x00F6_8D8C;
+const SP_F68D8C_PROLOGUE: [u8; 6] = [0x8B, 0x08, 0x8B, 0x11, 0x8B, 0x02];
+const SP_F68D8C_CONT: usize = 0x00F6_8D92;
+const SP_F68D8C_SKIP: usize = 0x00F6_8DCE;
+
+// SP anim entry loop null `[ebp]` guard (`0x00F68E90`: `mov edx, [ebp]; mov ecx, [edx+0x14]`)
+const SP_F68E90_GUARD: usize = 0x00F6_8E90;
+const SP_F68E90_PROLOGUE: [u8; 6] = [0x8B, 0x55, 0x00, 0x8B, 0x4A, 0x14];
+const SP_F68E90_CONT: usize = 0x00F6_8E96;
+const SP_F68E90_SKIP: usize = 0x00F6_8EB2;
+
+// EaString::append corrupt length guard (`0x00401340`: `mov eax, [esp+4]; sub esp, 8`, `ret 8`)
+const SP_EASTR_401340_GUARD: usize = 0x0040_1340;
+const SP_EASTR_401340_PROLOGUE: [u8; 7] = [0x8B, 0x44, 0x24, 0x04, 0x83, 0xEC, 0x08];
+const SP_EASTR_401340_CONT: usize = 0x0040_1347;
+
+// SP anim entry search loop null `[edx]` guard (`0x00F68D40`: `mov edi, [edx]; cmp [edi+0x14], ebp`)
+const SP_F68D40_GUARD: usize = 0x00F6_8D40;
+const SP_F68D40_PROLOGUE: [u8; 5] = [0x8B, 0x3A, 0x39, 0x6F, 0x14];
+const SP_F68D40_CONT: usize = 0x00F6_8D45;
+const SP_F68D40_SKIP: usize = 0x00F6_8D4B;
+
+// SP anim buffer null `[ebx+0x38]` guard (`0x00F691CC`: `mov eax, [ebx+0x38]; mov ecx, [eax+0xc]; mov edx, [eax+0x10]`)
+const SP_F691CC_GUARD: usize = 0x00F6_91CC;
+const SP_F691CC_PROLOGUE: [u8; 9] = [0x8B, 0x43, 0x38, 0x8B, 0x48, 0x0C, 0x8B, 0x50, 0x10];
+const SP_F691CC_CONT: usize = 0x00F6_91D5;
+const SP_F691CC_SKIP: usize = 0x00F6_9731;
+
+// SP anim null `[[esi]+0x38]` copy guard (`0x00F5D230`: `mov ecx, [esi]; mov ecx, [ecx+0x38]`)
+const SP_F5D230_GUARD: usize = 0x00F5_D230;
+const SP_F5D230_PROLOGUE: [u8; 5] = [0x8B, 0x0E, 0x8B, 0x49, 0x38];
+const SP_F5D230_CONT: usize = 0x00F5_D235;
+const SP_F5D230_SKIP: usize = 0x00F5_D251;
+
+// Frostbite sibling free() corrupt/unaligned pointer guard (`0x0041B7F0`: `push esi; mov esi, [esp+8]`)
+const SP_FREE_41B7F0_GUARD: usize = 0x0041_B7F0;
+const SP_FREE_41B7F0_PROLOGUE: [u8; 5] = [0x56, 0x8B, 0x74, 0x24, 0x08];
+const SP_FREE_41B7F0_CONT: usize = 0x0041_B7F5;
+
+// SP audio/client null `[edi]` vtable guard (`0x01016679`: `mov ecx, [edi]; mov edx, [ecx]; mov edx, [edx+0xc]`)
+const SP_1016679_GUARD: usize = 0x0101_6679;
+const SP_1016679_PROLOGUE: [u8; 7] = [0x8B, 0x0F, 0x8B, 0x11, 0x8B, 0x52, 0x0C];
+const SP_1016679_CONT: usize = 0x0101_6680;
+const SP_1016679_EXIT: usize = 0x0101_668B;
+
+// EaString concat corrupt `edi` guard (`0x0045AE5D`: `push edi; mov edi, [esp+0x14]`)
+const SP_45AE5D_GUARD: usize = 0x0045_AE5D;
+const SP_45AE5D_PROLOGUE: [u8; 5] = [0x57, 0x8B, 0x7C, 0x24, 0x14];
+const SP_45AE5D_CONT: usize = 0x0045_AE62;
+
+// TrieNode::appendKey corrupt key-pointer guard (`0x004BCB5D`: `mov edx, [ecx]; mov eax, edx; lea esi, [eax+1]`)
+const TRIE_KEY_4BCB5D_GUARD: usize = 0x004B_CB5D;
+const TRIE_KEY_4BCB5D_PROLOGUE: [u8; 7] = [0x8B, 0x11, 0x8B, 0xC2, 0x8D, 0x70, 0x01];
+const TRIE_KEY_4BCB5D_CONT: usize = 0x004B_CB64;
+
+// Linked-list walk corrupt `edi` guard (`0x00465311`: `cmp [edi+8], ebx; je +6`)
+const SP_465311_GUARD: usize = 0x0046_5311;
+const SP_465311_PROLOGUE: [u8; 5] = [0x39, 0x5F, 0x08, 0x74, 0x06];
+const SP_465311_CONT: usize = 0x0046_5316;
+const SP_465311_DONE: usize = 0x0046_531C;
+
 // Resource ref-list corrupted `esi` guard (`0x004968C0`: `mov eax, [esi+0xc]; test eax, eax`)
 const SP_LIST_4968_GUARD: usize = 0x0049_68C0;
 const SP_LIST_4968_PROLOGUE: [u8; 5] = [0x8B, 0x46, 0x0C, 0x85, 0xC0];
@@ -1056,6 +1253,7 @@ unsafe extern "system" {
     fn GetModuleHandleExA(flags: u32, name: *const c_void, out: *mut *mut c_void) -> i32;
     fn GetModuleFileNameA(module: *mut c_void, buf: *mut u8, size: u32) -> u32;
     fn IsBadReadPtr(ptr: *const c_void, len: usize) -> i32;
+    fn IsBadWritePtr(ptr: *mut c_void, len: usize) -> i32;
 }
 
 #[repr(C)]
@@ -1137,7 +1335,7 @@ pub unsafe fn install(mode: ModeId) -> (usize, usize) {
     let is_console_port = matches!(mode, ModeId::Bf1943 | ModeId::Bfbc1);
     let is_bfbc1 = mode == ModeId::Bfbc1;
     let expected = if is_bfbc1 {
-        194
+        231
     } else if is_console_port {
         6
     } else {
@@ -3130,6 +3328,413 @@ pub unsafe fn install(mode: ModeId) -> (usize, usize) {
         }
         if unsafe {
             crate::hooks::install_detour(
+                TRIE_NEXT_CYCLE_GUARD,
+                &TRIE_NEXT_CYCLE_PROLOGUE,
+                trie_next_cycle_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_6B697B_GUARD,
+                &SP_6B697B_PROLOGUE,
+                sp_6b697b_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_B025D1_GUARD,
+                &SP_B025D1_PROLOGUE,
+                sp_b025d1_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_B025EE_GUARD,
+                &SP_B025EE_PROLOGUE,
+                sp_b025ee_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_B02651_GUARD,
+                &SP_B02651_PROLOGUE,
+                sp_b02651_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_69F302_GUARD,
+                &SP_69F302_PROLOGUE,
+                sp_69f302_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_69F256_GUARD,
+                &SP_69F256_PROLOGUE,
+                sp_69f256_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_ANIM_INIT0_GUARD,
+                &SP_ANIM_INIT0_PROLOGUE,
+                sp_anim_init0_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_A4F800_GUARD,
+                &SP_A4F800_PROLOGUE,
+                sp_a4f800_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_FREE_41B8B0_GUARD,
+                &SP_FREE_41B8B0_PROLOGUE,
+                sp_free_41b8b0_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_F36B80_GUARD,
+                &SP_F36B80_PROLOGUE,
+                sp_f36b80_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                TRIE_INS_PTR_GUARD,
+                &TRIE_INS_PTR_PROLOGUE,
+                trie_ins_ptr_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_A4EF90_GUARD,
+                &SP_A4EF90_PROLOGUE,
+                sp_a4ef90_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_A4EFB0_GUARD,
+                &SP_A4EFB0_PROLOGUE,
+                sp_a4efb0_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_F6C449_GUARD,
+                &SP_F6C449_PROLOGUE,
+                sp_f6c449_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_STRBUF_7F80_GUARD,
+                &SP_STRBUF_7F80_PROLOGUE,
+                sp_strbuf_7f80_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_STRBUF_7FB0_GUARD,
+                &SP_STRBUF_7FB0_PROLOGUE,
+                sp_strbuf_7fb0_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_STRBUF_7FD0_GUARD,
+                &SP_STRBUF_7FD0_PROLOGUE,
+                sp_strbuf_7fd0_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_F5CC10_GUARD,
+                &SP_F5CC10_PROLOGUE,
+                sp_f5cc10_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_F62BA1_GUARD,
+                &SP_F62BA1_PROLOGUE,
+                sp_f62ba1_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_F6B52B_GUARD,
+                &SP_F6B52B_PROLOGUE,
+                sp_f6b52b_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_F689F9_GUARD,
+                &SP_F689F9_PROLOGUE,
+                sp_f689f9_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_A4F020_GUARD,
+                &SP_A4F020_PROLOGUE,
+                sp_a4f020_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_F68CC4_GUARD,
+                &SP_F68CC4_PROLOGUE,
+                sp_f68cc4_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_F42EEA_GUARD,
+                &SP_F42EEA_PROLOGUE,
+                sp_f42eea_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_4B2ED3_GUARD,
+                &SP_4B2ED3_PROLOGUE,
+                sp_4b2ed3_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_F68D8C_GUARD,
+                &SP_F68D8C_PROLOGUE,
+                sp_f68d8c_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_F68E90_GUARD,
+                &SP_F68E90_PROLOGUE,
+                sp_f68e90_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_EASTR_401340_GUARD,
+                &SP_EASTR_401340_PROLOGUE,
+                sp_eastr_401340_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_F68D40_GUARD,
+                &SP_F68D40_PROLOGUE,
+                sp_f68d40_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_F691CC_GUARD,
+                &SP_F691CC_PROLOGUE,
+                sp_f691cc_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_F5D230_GUARD,
+                &SP_F5D230_PROLOGUE,
+                sp_f5d230_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_FREE_41B7F0_GUARD,
+                &SP_FREE_41B7F0_PROLOGUE,
+                sp_free_41b7f0_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_1016679_GUARD,
+                &SP_1016679_PROLOGUE,
+                sp_1016679_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_45AE5D_GUARD,
+                &SP_45AE5D_PROLOGUE,
+                sp_45ae5d_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                TRIE_KEY_4BCB5D_GUARD,
+                &TRIE_KEY_4BCB5D_PROLOGUE,
+                trie_key_4bcb5d_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_465311_GUARD,
+                &SP_465311_PROLOGUE,
+                sp_465311_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
                 SP_LIST_4968_GUARD,
                 &SP_LIST_4968_PROLOGUE,
                 sp_list_4968_guard_entry as *const c_void,
@@ -4013,6 +4618,19 @@ unsafe extern "C" fn pool_pop2_guard_entry() {
 #[unsafe(no_mangle)]
 unsafe extern "cdecl" fn opfor_is_bad_ptr(p: usize) -> u32 {
     if unsafe { IsBadReadPtr(p as *const c_void, 4) } != 0 {
+        1
+    } else {
+        0
+    }
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(no_mangle)]
+unsafe extern "cdecl" fn opfor_is_bad_write_ptr(p: usize) -> u32 {
+    if p < 0x10000
+        || unsafe { IsBadWritePtr(p as *mut c_void, 8) } != 0
+        || unsafe { IsBadReadPtr((p - 8) as *const c_void, 8) } != 0
+    {
         1
     } else {
         0
@@ -7134,6 +7752,875 @@ unsafe extern "C" fn trie_leaf_guard_entry() {
 
 #[cfg(target_arch = "x86")]
 #[unsafe(naked)]
+unsafe extern "C" fn trie_next_cycle_guard_entry() {
+    std::arch::naked_asm!(
+        "mov edx, dword ptr [ecx + 0xc]",
+        "cmp edx, 0x10000",
+        "jb 2f",
+        "cmp edx, ecx",
+        "je 2f",
+        "cmp dword ptr [edx + 0xc], ecx",
+        "je 2f",
+        "test edx, edx",
+        "push {cont}",
+        "ret",
+        "2:",
+        "push {done}",
+        "ret",
+        cont = const TRIE_NEXT_CYCLE_CONT,
+        done = const TRIE_NEXT_CYCLE_DONE,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_6b697b_guard_entry() {
+    std::arch::naked_asm!(
+        "cmp eax, 0x10000",
+        "jb 2f",
+        "mov eax, dword ptr [eax + 0x14]",
+        "cmp eax, ebp",
+        "push {cont}",
+        "ret",
+        "2:",
+        "push {skip}",
+        "ret",
+        cont = const SP_6B697B_CONT,
+        skip = const SP_6B697B_SKIP,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_b025d1_guard_entry() {
+    std::arch::naked_asm!(
+        "mov ecx, dword ptr [edi + 0x44]",
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "mov eax, dword ptr [ecx + 0x10]",
+        "push {cont}",
+        "ret",
+        "2:",
+        "xor eax, eax",
+        "push {cont}",
+        "ret",
+        cont = const SP_B025D1_CONT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_b025ee_guard_entry() {
+    std::arch::naked_asm!(
+        "mov edx, dword ptr [edi + 0x44]",
+        "cmp edx, 0x10000",
+        "jb 2f",
+        "fld dword ptr [edx + 0x2c]",
+        "push {cont}",
+        "ret",
+        "2:",
+        "mov dword ptr [esi + 0x70], 0",
+        "mov dword ptr [esi + 0x74], 0",
+        "mov byte ptr [esi + 0x8c], 0",
+        "mov byte ptr [esi + 0x8e], 0",
+        "mov byte ptr [esi + 0x8f], 0",
+        "mov byte ptr [esi + 0x90], 0",
+        "push {skip}",
+        "ret",
+        cont = const SP_B025EE_CONT,
+        skip = const SP_B025EE_SKIP,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_b02651_guard_entry() {
+    std::arch::naked_asm!(
+        "mov ecx, dword ptr [edi + 0x44]",
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "fld dword ptr [ecx + 0x50]",
+        "push {cont}",
+        "ret",
+        "2:",
+        "mov dword ptr [esi + 0x84], 0",
+        "mov dword ptr [esi + 0x88], 0",
+        "mov byte ptr [esi + 0x8d], 0",
+        "pop edi",
+        "pop esi",
+        "mov esp, ebp",
+        "pop ebp",
+        "ret 4",
+        cont = const SP_B02651_CONT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_69f302_guard_entry() {
+    std::arch::naked_asm!(
+        "test esi, esi",
+        "jnz 3f",
+        "mov esi, dword ptr [ecx]",
+        "3:",
+        "cmp esi, 0x10000",
+        "jb 2f",
+        "push {cont}",
+        "ret",
+        "2:",
+        "push {exit}",
+        "ret",
+        cont = const SP_69F302_CONT,
+        exit = const SP_69F302_EXIT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_69f256_guard_entry() {
+    std::arch::naked_asm!(
+        "test edi, edi",
+        "jnz 3f",
+        "mov edi, dword ptr [ecx]",
+        "3:",
+        "cmp edi, 0x10000",
+        "jb 2f",
+        "push {cont}",
+        "ret",
+        "2:",
+        "push {exit}",
+        "ret",
+        cont = const SP_69F256_CONT,
+        exit = const SP_69F256_EXIT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_anim_init0_guard_entry() {
+    std::arch::naked_asm!(
+        "mov eax, dword ptr [ebx]",
+        "cmp eax, 0x10000",
+        "jb 2f",
+        "cmp dword ptr [eax + 0x54], edi",
+        "push {cont}",
+        "ret",
+        "2:",
+        "push {skip}",
+        "ret",
+        cont = const SP_ANIM_INIT0_CONT,
+        skip = const SP_ANIM_INIT0_SKIP,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_a4f800_guard_entry() {
+    std::arch::naked_asm!(
+        "push esi",
+        "mov esi, dword ptr [esp + 8]",
+        "cmp esi, 0x10000",
+        "jb 2f",
+        "push {cont}",
+        "ret",
+        "2:",
+        "xor eax, eax",
+        "pop esi",
+        "ret",
+        cont = const SP_A4F800_CONT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_free_41b8b0_guard_entry() {
+    std::arch::naked_asm!(
+        "push esi",
+        "mov esi, dword ptr [esp + 8]",
+        "test esi, esi",
+        "jz 2f",
+        "test esi, 3",
+        "jnz 2f",
+        "cmp esi, 0x00400000",
+        "jb 2f",
+        "cmp esi, 0x60000000",
+        "jb 3f",
+        "push eax",
+        "push ecx",
+        "push edx",
+        "push esi",
+        "call {bad}",
+        "add esp, 4",
+        "test eax, eax",
+        "pop edx",
+        "pop ecx",
+        "pop eax",
+        "jnz 2f",
+        "3:",
+        "push {cont}",
+        "ret",
+        "2:",
+        "pop esi",
+        "ret",
+        bad = sym opfor_is_bad_write_ptr,
+        cont = const SP_FREE_41B8B0_CONT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_f36b80_guard_entry() {
+    std::arch::naked_asm!(
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "mov eax, dword ptr [ecx + 0x10]",
+        "ret",
+        "2:",
+        "xor eax, eax",
+        "ret",
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn trie_ins_ptr_guard_entry() {
+    std::arch::naked_asm!(
+        "test ebp, 3",
+        "jnz 2f",
+        "cmp ebp, 0x01000000",
+        "jb 2f",
+        "cmp ebp, 0x7fff0000",
+        "jae 2f",
+        "cmp ebp, 0x60000000",
+        "jb 4f",
+        "push eax",
+        "push ecx",
+        "push edx",
+        "lea eax, [ebp + 8]",
+        "push eax",
+        "call {bad}",
+        "add esp, 4",
+        "test eax, eax",
+        "pop edx",
+        "pop ecx",
+        "pop eax",
+        "jnz 2f",
+        "4:",
+        "test byte ptr [ebp + 8], 1",
+        "jnz 3f",
+        "push {zero}",
+        "ret",
+        "3:",
+        "push {one}",
+        "ret",
+        "2:",
+        "push {end}",
+        "ret",
+        bad = sym opfor_is_bad_ptr,
+        zero = const TRIE_INS_PTR_ZERO,
+        one = const TRIE_INS_PTR_ONE,
+        end = const TRIE_INS_PTR_END,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_a4ef90_guard_entry() {
+    std::arch::naked_asm!(
+        "mov eax, dword ptr [esp + 4]",
+        "cmp eax, 0x10000",
+        "jb 2f",
+        "mov eax, dword ptr [eax + 4]",
+        "ret",
+        "2:",
+        "xor eax, eax",
+        "ret",
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_a4efb0_guard_entry() {
+    std::arch::naked_asm!(
+        "mov edx, dword ptr [esp + 4]",
+        "cmp edx, 0x10000",
+        "jb 2f",
+        "mov ecx, dword ptr [edx + 0x24]",
+        "push {cont}",
+        "ret",
+        "2:",
+        "xor eax, eax",
+        "ret",
+        cont = const SP_A4EFB0_CONT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_f6c449_guard_entry() {
+    std::arch::naked_asm!(
+        "cmp eax, 0x10000",
+        "jb 2f",
+        "mov edx, dword ptr [esi + 0x18]",
+        "mov ecx, dword ptr [eax + 4]",
+        "push {cont}",
+        "ret",
+        "2:",
+        "push {skip}",
+        "ret",
+        cont = const SP_F6C449_CONT,
+        skip = const SP_F6C449_SKIP,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_strbuf_7f80_guard_entry() {
+    std::arch::naked_asm!(
+        "mov eax, dword ptr [ecx + 4]",
+        "mov edx, dword ptr [ecx + 8]",
+        "dec edx",
+        "cmp eax, edx",
+        "jae 2f",
+        "mov dl, byte ptr [esp + 4]",
+        "mov byte ptr [eax], dl",
+        "add dword ptr [ecx + 4], 1",
+        "2:",
+        "ret 4",
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_strbuf_7fb0_guard_entry() {
+    std::arch::naked_asm!(
+        "mov eax, ecx",
+        "mov ecx, dword ptr [eax + 4]",
+        "mov edx, dword ptr [eax + 8]",
+        "dec edx",
+        "cmp ecx, edx",
+        "jae 2f",
+        "mov dl, byte ptr [esp + 4]",
+        "mov byte ptr [ecx], dl",
+        "add ecx, 1",
+        "mov dword ptr [eax + 4], ecx",
+        "mov byte ptr [ecx], 0",
+        "2:",
+        "ret 4",
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_strbuf_7fd0_guard_entry() {
+    std::arch::naked_asm!(
+        "mov eax, ecx",
+        "mov ecx, dword ptr [esp + 4]",
+        "cmp ecx, 0x10000",
+        "jb 3f",
+        "push edi",
+        "push ebx",
+        "mov edi, dword ptr [eax + 4]",
+        "mov ebx, dword ptr [eax + 8]",
+        "dec ebx",
+        "1:",
+        "mov dl, byte ptr [ecx]",
+        "test dl, dl",
+        "jz 2f",
+        "cmp edi, ebx",
+        "jae 2f",
+        "mov byte ptr [edi], dl",
+        "add edi, 1",
+        "add ecx, 1",
+        "jmp 1b",
+        "2:",
+        "mov dword ptr [eax + 4], edi",
+        "cmp edi, dword ptr [eax + 8]",
+        "jae 4f",
+        "mov byte ptr [edi], 0",
+        "4:",
+        "pop ebx",
+        "pop edi",
+        "3:",
+        "ret 4",
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_f5cc10_guard_entry() {
+    std::arch::naked_asm!(
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "mov edx, dword ptr [ecx]",
+        "cmp edx, 0x10000",
+        "jb 2f",
+        "mov ecx, dword ptr [edx + 0x3c]",
+        "push {cont}",
+        "ret",
+        "2:",
+        "pop esi",
+        "ret 4",
+        cont = const SP_F5CC10_CONT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_f62ba1_guard_entry() {
+    std::arch::naked_asm!(
+        "cmp eax, 0x10000",
+        "jb 2f",
+        "mov edx, dword ptr [eax]",
+        "cmp edx, 0x10000",
+        "jb 2f",
+        "mov eax, dword ptr [edx + 0x38]",
+        "push {cont}",
+        "ret",
+        "2:",
+        "push {skip}",
+        "ret",
+        cont = const SP_F62BA1_CONT,
+        skip = const SP_F62BA1_SKIP,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_f6b52b_guard_entry() {
+    std::arch::naked_asm!(
+        "cmp eax, 0x10000",
+        "jb 2f",
+        "mov ecx, dword ptr [eax]",
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "cmp byte ptr [ecx + 0x7c], 0",
+        "push {cont}",
+        "ret",
+        "2:",
+        "push {skip}",
+        "ret",
+        cont = const SP_F6B52B_CONT,
+        skip = const SP_F6B52B_SKIP,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_f689f9_guard_entry() {
+    std::arch::naked_asm!(
+        "cmp eax, 0x10000",
+        "jb 2f",
+        "mov eax, dword ptr [eax + 4]",
+        "add dword ptr [0x018a4bb0], eax",
+        "push {cont}",
+        "ret",
+        "2:",
+        "push {skip}",
+        "ret",
+        cont = const SP_F689F9_CONT,
+        skip = const SP_F689F9_SKIP,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_a4f020_guard_entry() {
+    std::arch::naked_asm!(
+        "push esi",
+        "push edi",
+        "mov edi, dword ptr [esp + 0xc]",
+        "cmp edi, 0x10000",
+        "jb 2f",
+        "push {cont}",
+        "ret",
+        "2:",
+        "pop edi",
+        "pop esi",
+        "ret",
+        cont = const SP_A4F020_CONT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_f68cc4_guard_entry() {
+    std::arch::naked_asm!(
+        "cmp eax, 0x10000",
+        "jb 2f",
+        "mov edx, dword ptr [esp + 0x20]",
+        "mov ecx, dword ptr [eax + 4]",
+        "push {cont}",
+        "ret",
+        "2:",
+        "push {skip}",
+        "ret",
+        cont = const SP_F68CC4_CONT,
+        skip = const SP_F68CC4_SKIP,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_f42eea_guard_entry() {
+    std::arch::naked_asm!(
+        "cmp eax, 0x10000",
+        "jb 2f",
+        "mov ecx, dword ptr [eax]",
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "mov edx, dword ptr [ecx]",
+        "cmp edx, 0x10000",
+        "jb 2f",
+        "mov eax, dword ptr [edx]",
+        "push {cont}",
+        "ret",
+        "2:",
+        "push {skip}",
+        "ret",
+        cont = const SP_F42EEA_CONT,
+        skip = const SP_F42EEA_SKIP,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_4b2ed3_guard_entry() {
+    std::arch::naked_asm!(
+        "mov ecx, dword ptr [esp + 0x850]",
+        "test ecx, 3",
+        "jnz 2f",
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "cmp ecx, 0x7fff0000",
+        "jae 2f",
+        "cmp ecx, 0x60000000",
+        "jb 3f",
+        "push eax",
+        "push ecx",
+        "push edx",
+        "push ecx",
+        "call {bad}",
+        "add esp, 4",
+        "test eax, eax",
+        "pop edx",
+        "pop ecx",
+        "pop eax",
+        "jnz 2f",
+        "3:",
+        "mov eax, dword ptr [ecx]",
+        "push {cont}",
+        "ret",
+        "2:",
+        "push {skip}",
+        "ret",
+        bad = sym opfor_is_bad_ptr,
+        cont = const SP_4B2ED3_CONT,
+        skip = const SP_4B2ED3_SKIP,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_f68d8c_guard_entry() {
+    std::arch::naked_asm!(
+        "cmp eax, 0x10000",
+        "jb 2f",
+        "mov ecx, dword ptr [eax]",
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "mov edx, dword ptr [ecx]",
+        "cmp edx, 0x10000",
+        "jb 2f",
+        "mov eax, dword ptr [edx]",
+        "push {cont}",
+        "ret",
+        "2:",
+        "push {skip}",
+        "ret",
+        cont = const SP_F68D8C_CONT,
+        skip = const SP_F68D8C_SKIP,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_f68e90_guard_entry() {
+    std::arch::naked_asm!(
+        "mov edx, dword ptr [ebp]",
+        "cmp edx, 0x10000",
+        "jb 2f",
+        "mov ecx, dword ptr [edx + 0x14]",
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "push {cont}",
+        "ret",
+        "2:",
+        "push {skip}",
+        "ret",
+        cont = const SP_F68E90_CONT,
+        skip = const SP_F68E90_SKIP,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_eastr_401340_guard_entry() {
+    std::arch::naked_asm!(
+        "mov eax, dword ptr [esp + 4]",
+        "mov edx, dword ptr [esp + 8]",
+        "cmp eax, 0x10000",
+        "jb 2f",
+        "sub edx, eax",
+        "cmp edx, 0x00100000",
+        "ja 2f",
+        "sub esp, 8",
+        "push {cont}",
+        "ret",
+        "2:",
+        "mov eax, ecx",
+        "ret 8",
+        cont = const SP_EASTR_401340_CONT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_f68d40_guard_entry() {
+    std::arch::naked_asm!(
+        "mov edi, dword ptr [edx]",
+        "cmp edi, 0x10000",
+        "jb 2f",
+        "cmp dword ptr [edi + 0x14], ebp",
+        "push {cont}",
+        "ret",
+        "2:",
+        "push {skip}",
+        "ret",
+        cont = const SP_F68D40_CONT,
+        skip = const SP_F68D40_SKIP,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_f691cc_guard_entry() {
+    std::arch::naked_asm!(
+        "mov eax, dword ptr [ebx + 0x38]",
+        "cmp eax, 0x10000",
+        "jb 2f",
+        "mov ecx, dword ptr [eax + 0xc]",
+        "mov edx, dword ptr [eax + 0x10]",
+        "push {cont}",
+        "ret",
+        "2:",
+        "xor ebx, ebx",
+        "mov dword ptr [ebp + 0x4c], ebx",
+        "mov dword ptr [ebp + 0x50], ebx",
+        "push {skip}",
+        "ret",
+        cont = const SP_F691CC_CONT,
+        skip = const SP_F691CC_SKIP,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_f5d230_guard_entry() {
+    std::arch::naked_asm!(
+        "mov ecx, dword ptr [esi]",
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "mov ecx, dword ptr [ecx + 0x38]",
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "push {cont}",
+        "ret",
+        "2:",
+        "push {skip}",
+        "ret",
+        cont = const SP_F5D230_CONT,
+        skip = const SP_F5D230_SKIP,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_free_41b7f0_guard_entry() {
+    std::arch::naked_asm!(
+        "push esi",
+        "mov esi, dword ptr [esp + 8]",
+        "test esi, esi",
+        "jz 2f",
+        "test esi, 3",
+        "jnz 2f",
+        "cmp esi, 0x00400000",
+        "jb 2f",
+        "cmp esi, 0x60000000",
+        "jb 3f",
+        "push eax",
+        "push ecx",
+        "push edx",
+        "push esi",
+        "call {bad}",
+        "add esp, 4",
+        "test eax, eax",
+        "pop edx",
+        "pop ecx",
+        "pop eax",
+        "jnz 2f",
+        "3:",
+        "push {cont}",
+        "ret",
+        "2:",
+        "pop esi",
+        "ret",
+        bad = sym opfor_is_bad_write_ptr,
+        cont = const SP_FREE_41B7F0_CONT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_1016679_guard_entry() {
+    std::arch::naked_asm!(
+        "mov ecx, dword ptr [edi]",
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "mov edx, dword ptr [ecx]",
+        "cmp edx, 0x10000",
+        "jb 2f",
+        "mov edx, dword ptr [edx + 0xc]",
+        "push {cont}",
+        "ret",
+        "2:",
+        "push {exit}",
+        "ret",
+        cont = const SP_1016679_CONT,
+        exit = const SP_1016679_EXIT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_45ae5d_guard_entry() {
+    std::arch::naked_asm!(
+        "push edi",
+        "mov edi, dword ptr [esp + 0x14]",
+        "test edi, 3",
+        "jnz 2f",
+        "cmp edi, 0x10000",
+        "jb 2f",
+        "cmp edi, 0x7fff0000",
+        "jae 2f",
+        "cmp edi, 0x60000000",
+        "jb 3f",
+        "push eax",
+        "push ecx",
+        "push edx",
+        "push edi",
+        "call {bad}",
+        "add esp, 4",
+        "test eax, eax",
+        "pop edx",
+        "pop ecx",
+        "pop eax",
+        "jnz 2f",
+        "3:",
+        "push {cont}",
+        "ret",
+        "2:",
+        "mov dword ptr [esi], 0",
+        "mov dword ptr [esi + 4], 0",
+        "mov dword ptr [esi + 8], 0",
+        "pop edi",
+        "mov eax, esi",
+        "pop esi",
+        "pop ebp",
+        "ret",
+        bad = sym opfor_is_bad_ptr,
+        cont = const SP_45AE5D_CONT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn trie_key_4bcb5d_guard_entry() {
+    std::arch::naked_asm!(
+        "mov edx, dword ptr [ecx]",
+        "cmp edx, 0x10000",
+        "jb 2f",
+        "cmp edx, 0x7fff0000",
+        "jae 2f",
+        "cmp edx, 0x60000000",
+        "jb 3f",
+        "push eax",
+        "push ecx",
+        "push edx",
+        "push edx",
+        "call {bad}",
+        "add esp, 4",
+        "test eax, eax",
+        "pop edx",
+        "pop ecx",
+        "pop eax",
+        "jnz 2f",
+        "3:",
+        "mov eax, edx",
+        "lea esi, [eax + 1]",
+        "push {cont}",
+        "ret",
+        "2:",
+        "mov eax, dword ptr [esp + 8]",
+        "mov byte ptr [eax], 0",
+        "pop esi",
+        "ret 8",
+        bad = sym opfor_is_bad_ptr,
+        cont = const TRIE_KEY_4BCB5D_CONT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_465311_guard_entry() {
+    std::arch::naked_asm!(
+        "test edi, 3",
+        "jnz 2f",
+        "cmp edi, 0x10000",
+        "jb 2f",
+        "cmp edi, 0x7fff0000",
+        "jae 2f",
+        "cmp edi, 0x60000000",
+        "jb 3f",
+        "push eax",
+        "push ecx",
+        "push edx",
+        "push edi",
+        "call {bad}",
+        "add esp, 4",
+        "test eax, eax",
+        "pop edx",
+        "pop ecx",
+        "pop eax",
+        "jnz 2f",
+        "3:",
+        "cmp dword ptr [edi + 8], ebx",
+        "je 4f",
+        "push {cont}",
+        "ret",
+        "2:",
+        "mov edi, esi",
+        "4:",
+        "push {done}",
+        "ret",
+        bad = sym opfor_is_bad_ptr,
+        cont = const SP_465311_CONT,
+        done = const SP_465311_DONE,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
 unsafe extern "C" fn sp_list_4968_guard_entry() {
     std::arch::naked_asm!(
         "test esi, 3",
@@ -7210,11 +8697,34 @@ unsafe extern "C" fn sp_4495e0_guard_entry() {
         "cmp eax, 0x10000",
         "jb 2f",
         "mov eax, dword ptr [eax + 0x10]",
+        "test eax, eax",
+        "jz 2f",
+        "test eax, 3",
+        "jnz 2f",
+        "cmp eax, 0x00400000",
+        "jb 2f",
+        "cmp eax, 0x7fff0000",
+        "jae 2f",
+        "cmp eax, 0x60000000",
+        "jb 3f",
+        "push eax",
+        "push ecx",
+        "push edx",
+        "push eax",
+        "call {bad}",
+        "add esp, 4",
+        "test eax, eax",
+        "pop edx",
+        "pop ecx",
+        "pop eax",
+        "jnz 2f",
+        "3:",
         "push {cont}",
         "ret",
         "2:",
-        "xor eax, eax",
+        "mov eax, 1",
         "ret",
+        bad = sym opfor_is_bad_ptr,
         cont = const SP_4495E0_CONT,
     );
 }
@@ -7260,22 +8770,25 @@ unsafe extern "C" fn sp_4493a3_guard_entry() {
 #[unsafe(naked)]
 unsafe extern "C" fn sp_pool_4cf9_guard_entry() {
     std::arch::naked_asm!(
+        "test eax, eax",
+        "jz 2f",
+        "test eax, 3",
+        "jnz 4f",
         "cmp eax, 0x01000000",
-        "jb 2f",
+        "jb 4f",
         "cmp eax, 0x60000000",
         "jb 3f",
         "push eax",
         "push ecx",
         "push edx",
-        "lea ecx, [eax - 8]",
-        "push ecx",
+        "push eax",
         "call {bad}",
         "add esp, 4",
         "test eax, eax",
         "pop edx",
         "pop ecx",
         "pop eax",
-        "jnz 2f",
+        "jnz 4f",
         "3:",
         "mov ecx, dword ptr [eax - 8]",
         "mov dword ptr [eax], ecx",
@@ -7284,7 +8797,12 @@ unsafe extern "C" fn sp_pool_4cf9_guard_entry() {
         "2:",
         "push {after}",
         "ret",
-        bad = sym opfor_is_bad_ptr,
+        "4:",
+        "pop edi",
+        "pop esi",
+        "pop ebx",
+        "ret 8",
+        bad = sym opfor_is_bad_write_ptr,
         after = const SP_POOL_4CF9_AFTER,
     );
 }
@@ -7405,8 +8923,7 @@ unsafe extern "C" fn sp_4cf9a6_guard_entry() {
         "push eax",
         "push ecx",
         "push edx",
-        "lea ecx, [eax - 8]",
-        "push ecx",
+        "push eax",
         "call {bad}",
         "add esp, 4",
         "test eax, eax",
@@ -7422,7 +8939,7 @@ unsafe extern "C" fn sp_4cf9a6_guard_entry() {
         "2:",
         "push {skip}",
         "ret",
-        bad = sym opfor_is_bad_ptr,
+        bad = sym opfor_is_bad_write_ptr,
         cont = const SP_4CF9A6_CONT,
         skip = const SP_4CF9A6_SKIP,
     );
