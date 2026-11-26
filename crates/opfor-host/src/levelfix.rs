@@ -978,10 +978,10 @@ const SP_4493A3_PROLOGUE: [u8; 6] = [0x83, 0x7E, 0x10, 0x00, 0x8B, 0xCE];
 const SP_4493A3_CONT: usize = 0x0044_93A9;
 const SP_4493A3_SKIP: usize = 0x0044_93D6;
 
-// Small-block pool ASCII-pointer write guard (`0x004CF9A0`: `test eax, eax; jz +0xb; mov ecx, [eax-8]`)
-const SP_POOL_4CF9_GUARD: usize = 0x004C_F9A0;
+// Small-block pool ASCII-pointer write guard (`0x004CF9A2`: `test eax, eax; jz +0xb; mov ecx, [eax-8]`)
+const SP_POOL_4CF9_GUARD: usize = 0x004C_F9A2;
 const SP_POOL_4CF9_PROLOGUE: [u8; 7] = [0x85, 0xC0, 0x74, 0x0B, 0x8B, 0x48, 0xF8];
-const SP_POOL_4CF9_AFTER: usize = 0x004C_F9AF;
+const SP_POOL_4CF9_AFTER: usize = 0x004C_F9B1;
 
 // Trie/allocator ASCII pointer guard (`0x004CF9A6`: `mov ecx, [eax-8]; mov [eax], ecx`)
 const SP_4CF9A6_GUARD: usize = 0x004C_F9A6;
