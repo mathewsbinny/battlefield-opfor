@@ -988,6 +988,27 @@ const SP_TRIE_4C8950_GUARD: usize = 0x004C_8950;
 const SP_TRIE_4C8950_PROLOGUE: [u8; 10] = [0x8B, 0x44, 0x24, 0x08, 0x81, 0xEC, 0x00, 0x04, 0x00, 0x00];
 const SP_TRIE_4C8950_CONT: usize = 0x004C_895A;
 
+// Sibling Trie null-parent `this` guards (`0x004C89B0`, `0x004C8A10`, `0x004C8A70`, `0x004C8AD0`, `0x004C8C80`)
+const SP_TRIE_4C89B0_GUARD: usize = 0x004C_89B0;
+const SP_TRIE_4C89B0_PROLOGUE: [u8; 10] = [0x8B, 0x44, 0x24, 0x04, 0x81, 0xEC, 0x00, 0x04, 0x00, 0x00];
+const SP_TRIE_4C89B0_CONT: usize = 0x004C_89BA;
+
+const SP_TRIE_4C8A10_GUARD: usize = 0x004C_8A10;
+const SP_TRIE_4C8A10_PROLOGUE: [u8; 10] = [0x8B, 0x44, 0x24, 0x04, 0x81, 0xEC, 0x00, 0x04, 0x00, 0x00];
+const SP_TRIE_4C8A10_CONT: usize = 0x004C_8A1A;
+
+const SP_TRIE_4C8A70_GUARD: usize = 0x004C_8A70;
+const SP_TRIE_4C8A70_PROLOGUE: [u8; 10] = [0x8B, 0x44, 0x24, 0x04, 0x81, 0xEC, 0x00, 0x04, 0x00, 0x00];
+const SP_TRIE_4C8A70_CONT: usize = 0x004C_8A7A;
+
+const SP_TRIE_4C8AD0_GUARD: usize = 0x004C_8AD0;
+const SP_TRIE_4C8AD0_PROLOGUE: [u8; 7] = [0x83, 0xEC, 0x0C, 0x53, 0x56, 0x8B, 0xF1];
+const SP_TRIE_4C8AD0_CONT: usize = 0x004C_8AD7;
+
+const SP_TRIE_4C8C80_GUARD: usize = 0x004C_8C80;
+const SP_TRIE_4C8C80_PROLOGUE: [u8; 6] = [0x81, 0xEC, 0xF4, 0x00, 0x00, 0x00];
+const SP_TRIE_4C8C80_CONT: usize = 0x004C_8C86;
+
 // Trie/allocator ASCII pointer guard (`0x004CF9A6`: `mov ecx, [eax-8]; mov [eax], ecx`)
 const SP_4CF9A6_GUARD: usize = 0x004C_F9A6;
 const SP_4CF9A6_PROLOGUE: [u8; 5] = [0x8B, 0x48, 0xF8, 0x89, 0x08];
@@ -1116,7 +1137,7 @@ pub unsafe fn install(mode: ModeId) -> (usize, usize) {
     let is_console_port = matches!(mode, ModeId::Bf1943 | ModeId::Bfbc1);
     let is_bfbc1 = mode == ModeId::Bfbc1;
     let expected = if is_bfbc1 {
-        189
+        194
     } else if is_console_port {
         6
     } else {
@@ -3167,6 +3188,61 @@ pub unsafe fn install(mode: ModeId) -> (usize, usize) {
                 SP_TRIE_4C8950_GUARD,
                 &SP_TRIE_4C8950_PROLOGUE,
                 sp_trie_4c8950_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_TRIE_4C89B0_GUARD,
+                &SP_TRIE_4C89B0_PROLOGUE,
+                sp_trie_4c89b0_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_TRIE_4C8A10_GUARD,
+                &SP_TRIE_4C8A10_PROLOGUE,
+                sp_trie_4c8a10_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_TRIE_4C8A70_GUARD,
+                &SP_TRIE_4C8A70_PROLOGUE,
+                sp_trie_4c8a70_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_TRIE_4C8AD0_GUARD,
+                &SP_TRIE_4C8AD0_PROLOGUE,
+                sp_trie_4c8ad0_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_TRIE_4C8C80_GUARD,
+                &SP_TRIE_4C8C80_PROLOGUE,
+                sp_trie_4c8c80_guard_entry as *const c_void,
             )
         }
         .is_some()
@@ -7154,6 +7230,90 @@ unsafe extern "C" fn sp_trie_4c8950_guard_entry() {
         "3:",
         "ret 8",
         cont = const SP_TRIE_4C8950_CONT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_trie_4c89b0_guard_entry() {
+    std::arch::naked_asm!(
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "mov eax, dword ptr [esp + 4]",
+        "sub esp, 0x400",
+        "push {cont}",
+        "ret",
+        "2:",
+        "xor eax, eax",
+        "ret 4",
+        cont = const SP_TRIE_4C89B0_CONT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_trie_4c8a10_guard_entry() {
+    std::arch::naked_asm!(
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "mov eax, dword ptr [esp + 4]",
+        "sub esp, 0x400",
+        "push {cont}",
+        "ret",
+        "2:",
+        "xor eax, eax",
+        "ret 4",
+        cont = const SP_TRIE_4C8A10_CONT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_trie_4c8a70_guard_entry() {
+    std::arch::naked_asm!(
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "mov eax, dword ptr [esp + 4]",
+        "sub esp, 0x400",
+        "push {cont}",
+        "ret",
+        "2:",
+        "xor eax, eax",
+        "ret 4",
+        cont = const SP_TRIE_4C8A70_CONT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_trie_4c8ad0_guard_entry() {
+    std::arch::naked_asm!(
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "sub esp, 0xc",
+        "push ebx",
+        "push esi",
+        "mov esi, ecx",
+        "push {cont}",
+        "ret",
+        "2:",
+        "ret 8",
+        cont = const SP_TRIE_4C8AD0_CONT,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_trie_4c8c80_guard_entry() {
+    std::arch::naked_asm!(
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "sub esp, 0xf4",
+        "push {cont}",
+        "ret",
+        "2:",
+        "ret",
+        cont = const SP_TRIE_4C8C80_CONT,
     );
 }
 
