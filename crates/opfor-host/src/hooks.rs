@@ -465,6 +465,9 @@ unsafe extern "fastcall" fn detour_main_menu_disp(
             crate::log_line(&format!(
                 "MainMenuDispatcher: captured live menuSelf={menu_self:p} on cmd='{cname}'"
             ));
+        } else if cname == "loadEulaFonts" || cname == "startBackgroundMovie" {
+            crate::ui_state::set_scene(crate::ui_state::GameScene::InMenu);
+            crate::dx_overlay::mark_dirty();
         }
     }
     if unsafe { crate::profile::handle_menu_command(&cname, &cargs) } {

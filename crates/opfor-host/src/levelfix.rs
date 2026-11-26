@@ -1323,6 +1323,21 @@ const SP_508220_GUARD: usize = 0x0050_8220;
 const SP_508220_PROLOGUE: [u8; 5] = [0x8B, 0x54, 0x24, 0x08, 0x56];
 const SP_508220_CONT: usize = 0x0050_8225;
 
+// SP local-loopback packet deserializer (`0x00BEDF50`): log & suppress protocol-error disconnect on ported BFBC1 ghosts
+const SP_PACKET_PROC: usize = 0x00BE_DF50;
+const SP_PACKET_PROC_PROLOGUE: [u8; 6] = [0x53, 0x8B, 0x5C, 0x24, 0x08, 0x55];
+
+// SP live-sim null `[esi+0x80]` guard (`0x006CA0B0`: `cmp dword ptr [eax+0x1c], 0; je 0x6ca0ea`)
+const SP_6CA0B0_GUARD: usize = 0x006C_A0B0;
+const SP_6CA0B0_PROLOGUE: [u8; 6] = [0x83, 0x78, 0x1C, 0x00, 0x74, 0x34];
+const SP_6CA0B0_CONT: usize = 0x006C_A0B6;
+const SP_6CA0B0_SKIP: usize = 0x006C_A0EA;
+
+// SP physics float getter null `[ecx+0x44]`/`[ecx+0x48]` guard (`0x00AF8560`: `sub esp, 8; push ebx; push esi; mov esi, ecx`, returns `float` in `st(0)`)
+const SP_AF8560_GUARD: usize = 0x00AF_8560;
+const SP_AF8560_PROLOGUE: [u8; 7] = [0x83, 0xEC, 0x08, 0x53, 0x56, 0x8B, 0xF1];
+const SP_AF8560_CONT: usize = 0x00AF_8567;
+
 // Resource ref-list corrupted `esi` guard (`0x004968C0`: `mov eax, [esi+0xc]; test eax, eax`)
 const SP_LIST_4968_GUARD: usize = 0x0049_68C0;
 const SP_LIST_4968_PROLOGUE: [u8; 5] = [0x8B, 0x46, 0x0C, 0x85, 0xC0];
@@ -1522,7 +1537,7 @@ pub unsafe fn install(mode: ModeId) -> (usize, usize) {
     let is_console_port = matches!(mode, ModeId::Bf1943 | ModeId::Bfbc1);
     let is_bfbc1 = mode == ModeId::Bfbc1;
     let expected = if is_bfbc1 {
-        262
+        265
     } else if is_console_port {
         6
     } else {
@@ -4222,6 +4237,38 @@ pub unsafe fn install(mode: ModeId) -> (usize, usize) {
                 SP_508220_GUARD,
                 &SP_508220_PROLOGUE,
                 sp_508220_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if let Some(tramp) = unsafe {
+            crate::hooks::install_detour(
+                SP_PACKET_PROC,
+                &SP_PACKET_PROC_PROLOGUE,
+                detour_packet_proc as *const c_void,
+            )
+        } {
+            let _ = ORIG_PACKET_PROC.set(unsafe { std::mem::transmute(tramp) });
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_6CA0B0_GUARD,
+                &SP_6CA0B0_PROLOGUE,
+                sp_6ca0b0_guard_entry as *const c_void,
+            )
+        }
+        .is_some()
+        {
+            installed += 1;
+        }
+        if unsafe {
+            crate::hooks::install_detour(
+                SP_AF8560_GUARD,
+                &SP_AF8560_PROLOGUE,
+                sp_af8560_guard_entry as *const c_void,
             )
         }
         .is_some()
@@ -10263,6 +10310,86 @@ unsafe extern "C" fn sp_4cf9a6_guard_entry() {
         bad = sym opfor_is_bad_write_ptr,
         cont = const SP_4CF9A6_CONT,
         skip = const SP_4CF9A6_SKIP,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+type PacketProcFn = unsafe extern "fastcall" fn(usize, *mut c_void, usize) -> u8;
+#[cfg(target_arch = "x86")]
+static ORIG_PACKET_PROC: OnceLock<PacketProcFn> = OnceLock::new();
+
+#[cfg(target_arch = "x86")]
+unsafe extern "fastcall" fn detour_packet_proc(this: usize, edx: *mut c_void, pkt: usize) -> u8 {
+    let ok = if let Some(&orig) = ORIG_PACKET_PROC.get() {
+        unsafe { orig(this, edx, pkt) }
+    } else {
+        1
+    };
+    if ok == 0 {
+        static FAIL_LOGS: AtomicUsize = AtomicUsize::new(0);
+        if FAIL_LOGS.fetch_add(1, Ordering::Relaxed) < 8 {
+            let bits = if pkt >= 0x10000 {
+                unsafe { *((pkt + 8) as *const u32) }
+            } else {
+                0
+            };
+            let stream = if this >= 0x10000 {
+                unsafe { *((this + 0xc) as *const usize) }
+            } else {
+                0
+            };
+            let stream_vt = if stream >= 0x10000 {
+                unsafe { *(stream as *const usize) }
+            } else {
+                0
+            };
+            crate::log_line(&format!(
+                "levelfix: packet_proc failed (bits={bits} stream=0x{stream:x} vt=0x{stream_vt:x}) -> keeping loopback alive"
+            ));
+        }
+        return 1;
+    }
+    ok
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_6ca0b0_guard_entry() {
+    std::arch::naked_asm!(
+        "cmp eax, 0x10000",
+        "jb 2f",
+        "cmp dword ptr [eax + 0x1c], 0",
+        "je 2f",
+        "push {cont}",
+        "ret",
+        "2:",
+        "push {skip}",
+        "ret",
+        cont = const SP_6CA0B0_CONT,
+        skip = const SP_6CA0B0_SKIP,
+    );
+}
+
+#[cfg(target_arch = "x86")]
+#[unsafe(naked)]
+unsafe extern "C" fn sp_af8560_guard_entry() {
+    std::arch::naked_asm!(
+        "cmp ecx, 0x10000",
+        "jb 2f",
+        "cmp dword ptr [ecx + 0x44], 0x10000",
+        "jb 2f",
+        "cmp dword ptr [ecx + 0x48], 0x10000",
+        "jb 2f",
+        "sub esp, 8",
+        "push ebx",
+        "push esi",
+        "mov esi, ecx",
+        "push {cont}",
+        "ret",
+        "2:",
+        "fldz",
+        "ret",
+        cont = const SP_AF8560_CONT,
     );
 }
 
