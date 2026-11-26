@@ -1,0 +1,35 @@
+# Build artifacts & compiled binaries
+/target/
+*.exe
+*.dll
+*.pdb
+*.lib
+*.exp
+
+# Staged PC / console game assets (strictly user-supplied, never committed)
+/engine/
+/modules/
+/cache/
+/work/
+/utility/
+
+# Runtime user state, logs, and ledger
+/user/
+/ledger/
+*.log
+*.bak*
+*.tmp
+
+# Game asset binary formats
+*.fbrb
+*.hpd
+*.res
+*.bik
+*.iso
+*.bin
+*.dbx
+
+# OS / IDE clutter
+.DS_Store
+Thumbs.db
+__pycache__/

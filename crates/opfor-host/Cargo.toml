@@ -1,0 +1,12 @@
+[package]
+name = "opfor-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "OPFOREngine"
+path = "src/main.rs"
+
+[dependencies]
+opfor-vfs = { path = "../opfor-vfs" }

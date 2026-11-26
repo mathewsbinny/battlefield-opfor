@@ -1,0 +1,14 @@
+[package]
+name = "opfor-launcher"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "OPFOR"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "=0.36.2", default-features = false, features = ["accesskit", "default_fonts", "wgpu", "persistence"] }
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "ico"] }
+opfor-vfs = { path = "../opfor-vfs" }

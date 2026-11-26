@@ -1,0 +1,12 @@
+[package]
+name = "opfor-dll"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "dinput8"
+crate-type = ["cdylib"]
+
+[dependencies]
+opfor-vfs = { path = "../opfor-vfs" }
