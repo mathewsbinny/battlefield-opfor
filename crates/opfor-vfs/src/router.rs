@@ -120,8 +120,9 @@ impl VfsRouter {
         // 0. Skip stock BFBC2 intro movies only for eras that suppress the BFBC2 title screen (WW2 / BFBC1)
         if self.skip_intro_movies && SKIPPED_INTRO_MOVIES.contains(&rel) {
             if let Some(sub) = rel.strip_prefix("output/win32/") {
+                let sub_win = sub.replace('/', "\\");
                 for mdir in &self.module_dirs {
-                    let cand = mdir.join(sub.replace('/', "\\"));
+                    let cand = mdir.join(&sub_win);
                     if exists(&cand) {
                         return VfsResolution::Redirect(cand);
                     }
@@ -157,18 +158,20 @@ impl VfsRouter {
 
         // 1b. Era-isolated in-game HUD, minimap, frames, icons, and shared UI overlays
         // (strictly active era only — never leaks BF1943 or BFBC1 HUD into BFBC2 or Vietnam!).
-        // Covers BOTH `Dist/win32/` and `Package/` requests so BFBC1, BF1943, and BFBC2 each load
-        // their own original APT `ingame-00.fbrb` and font bundles.
-        if let Some(sub) = rel.strip_prefix("dist/win32/") {
-            if is_era_isolated_rel(sub) {
-                if let Some(ref active_dir) = self.active_mode_dir {
-                    let cand = active_dir.join(sub.replace('/', "\\"));
-                    if exists(&cand) {
-                        return VfsResolution::Redirect(cand);
-                    }
+        // Only redirect `Dist/win32/` for full-replacement `Dist`-only bundles (`ingame-00`, `loader-00`).
+        // Bundles that exist in BOTH `Dist/win32/` (base) and `Package/` (patch overlay) — such as
+        // `menu/shared/fonts_us-00.fbrb`, `menu/main/mainmenu-00.fbrb`, and `streaming_sounds-00.fbrb` —
+        // must let `Dist/win32/` pass through to stock base so `Package/` cleanly layers the era delta.
+        if let Some(sub) = rel.strip_prefix("dist/win32/")
+            && is_era_isolated_dist_rel(sub)
+        {
+            if let Some(ref active_dir) = self.active_mode_dir {
+                let cand = active_dir.join(sub.replace('/', "\\"));
+                if exists(&cand) {
+                    return VfsResolution::Redirect(cand);
                 }
-                return VfsResolution::PassThrough;
             }
+            return VfsResolution::PassThrough;
         }
         if let Some(sub) = rel.strip_prefix("package/") {
             if is_era_isolated_rel(sub) {
@@ -181,23 +184,24 @@ impl VfsRouter {
                 return VfsResolution::PassThrough;
             }
             if rel == "package/menu/main/mainmenu-00.fbrb" {
-                if let Some(ref native_menu) = self.bf1943_native_menu {
-                    if exists(native_menu) {
-                        return VfsResolution::Redirect(native_menu.clone());
-                    }
+                if let Some(ref native_menu) = self.bf1943_native_menu
+                    && exists(native_menu)
+                {
+                    return VfsResolution::Redirect(native_menu.clone());
                 }
                 return VfsResolution::PassThrough;
             }
 
             // 2. Package/<rel> -> active era first, then other enabled modules
+            let sub_win = sub.replace('/', "\\");
             if let Some(ref active_dir) = self.active_mode_dir {
-                let cand = active_dir.join(sub.replace('/', "\\"));
+                let cand = active_dir.join(&sub_win);
                 if exists(&cand) {
                     return VfsResolution::Redirect(cand);
                 }
             }
             for mdir in &self.module_dirs {
-                let cand = mdir.join(sub.replace('/', "\\"));
+                let cand = mdir.join(&sub_win);
                 if exists(&cand) {
                     return VfsResolution::Redirect(cand);
                 }
@@ -206,14 +210,15 @@ impl VfsRouter {
 
         // 3. Output/win32/<rel> -> active era first, then other enabled modules (ai/..., movies/...)
         if let Some(sub) = rel.strip_prefix("output/win32/") {
+            let sub_win = sub.replace('/', "\\");
             if let Some(ref active_dir) = self.active_mode_dir {
-                let cand = active_dir.join(sub.replace('/', "\\"));
+                let cand = active_dir.join(&sub_win);
                 if exists(&cand) {
                     return VfsResolution::Redirect(cand);
                 }
             }
             for mdir in &self.module_dirs {
-                let cand = mdir.join(sub.replace('/', "\\"));
+                let cand = mdir.join(&sub_win);
                 if exists(&cand) {
                     return VfsResolution::Redirect(cand);
                 }
@@ -239,16 +244,22 @@ impl VfsRouter {
     }
 }
 
-/// Returns `true` for shared HUD/UI/font/ingame bundle paths that must be strictly isolated to the
-/// currently active game era (`BFBC2`, `Vietnam`, `BF1943`, or `BFBC1`).
-fn is_era_isolated_rel(sub: &str) -> bool {
-    sub.starts_with("menu/hud/")
-        || sub.starts_with("menu/shared/")
-        || sub == "streaming_sounds-00.fbrb"
-        || sub == "levels/sp_common/ingame-00.fbrb"
+/// Returns `true` for `Dist/win32`-only full-replacement bundles that do not have a `Package/`
+/// overlay counterpart and must be isolated to the active era.
+fn is_era_isolated_dist_rel(sub: &str) -> bool {
+    sub == "levels/sp_common/ingame-00.fbrb"
         || sub == "levels/mp_common/ingame-00.fbrb"
         || sub == "levels/sp_common/loader-00.fbrb"
         || sub == "levels/mp_common/loader-00.fbrb"
+}
+
+/// Returns `true` for shared HUD/UI/font/ingame bundle paths that must be strictly isolated to the
+/// currently active game era (`BFBC2`, `Vietnam`, `BF1943`, or `BFBC1`).
+fn is_era_isolated_rel(sub: &str) -> bool {
+    is_era_isolated_dist_rel(sub)
+        || sub.starts_with("menu/hud/")
+        || sub.starts_with("menu/shared/")
+        || sub == "streaming_sounds-00.fbrb"
         || sub == "menu/main/mainmenu-00.fbrb"
 }
 
@@ -379,6 +390,58 @@ mod tests {
         assert_eq!(
             r_bc2.resolve_with(r"Package\levels\mp_common\ingame-00.fbrb", |p| existing.contains(p)),
             VfsResolution::PassThrough
+        );
+    }
+
+    #[test]
+    fn preserves_base_dist_for_menu_and_font_overlays() {
+        let root = Path::new(r"C:\Programming\Projects\battlefield-opfor");
+        let mods = vec![
+            dummy_module("bf1943", r"C:\Programming\Projects\battlefield-opfor\modules\bf1943"),
+            dummy_module("bfbc1", r"C:\Programming\Projects\battlefield-opfor\modules\bfbc1"),
+        ];
+        let existing: HashSet<PathBuf> = [
+            PathBuf::from(r"C:\Programming\Projects\battlefield-opfor\modules\bf1943\menu\main\mainmenu-00.fbrb"),
+            PathBuf::from(r"C:\Programming\Projects\battlefield-opfor\modules\bf1943\menu\shared\fonts_us-00.fbrb"),
+            PathBuf::from(r"C:\Programming\Projects\battlefield-opfor\modules\bfbc1\menu\main\mainmenu-00.fbrb"),
+        ]
+        .into_iter()
+        .collect();
+
+        let r_43 = VfsRouter::for_era(root, &mods, ModeId::Bf1943, true);
+        let r_bc1 = VfsRouter::for_era(root, &mods, ModeId::Bfbc1, true);
+
+        // Dist/win32 base bundles must pass through so base textures & SWFs remain mounted
+        assert_eq!(
+            r_43.resolve_with(r"Dist\win32\menu\main\mainmenu-00.fbrb", |p| existing.contains(p)),
+            VfsResolution::PassThrough
+        );
+        assert_eq!(
+            r_43.resolve_with(r"Dist\win32\menu\shared\fonts_us-00.fbrb", |p| existing.contains(p)),
+            VfsResolution::PassThrough
+        );
+        assert_eq!(
+            r_bc1.resolve_with(r"Dist\win32\menu\main\mainmenu-00.fbrb", |p| existing.contains(p)),
+            VfsResolution::PassThrough
+        );
+        // Package overlays still redirect strictly to the active era
+        assert_eq!(
+            r_43.resolve_with(r"Package\menu\main\mainmenu-00.fbrb", |p| existing.contains(p)),
+            VfsResolution::Redirect(PathBuf::from(
+                r"C:\Programming\Projects\battlefield-opfor\modules\bf1943\menu\main\mainmenu-00.fbrb"
+            ))
+        );
+        assert_eq!(
+            r_43.resolve_with(r"Package\menu\shared\fonts_us-00.fbrb", |p| existing.contains(p)),
+            VfsResolution::Redirect(PathBuf::from(
+                r"C:\Programming\Projects\battlefield-opfor\modules\bf1943\menu\shared\fonts_us-00.fbrb"
+            ))
+        );
+        assert_eq!(
+            r_bc1.resolve_with(r"Package\menu\main\mainmenu-00.fbrb", |p| existing.contains(p)),
+            VfsResolution::Redirect(PathBuf::from(
+                r"C:\Programming\Projects\battlefield-opfor\modules\bfbc1\menu\main\mainmenu-00.fbrb"
+            ))
         );
     }
 }

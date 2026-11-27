@@ -1,13 +1,17 @@
 //! Pure-Rust CLI for Project OPFOR (`battlefield-opfor/`):
-//! - `setup-engine <src_bfbc2>` : Copies stock BFBC2 -> `engine/` cleanly (skipping Rome/Nexus/Support)
-//!                                and routes Vietnam (`nam_*`) into `modules/vietnam/levels/`
-//! - `sync-cache`               : Merges `cache/package.mft` and writes `ledger/state.toml`
-//! - `build-hub`                : Builds Tool Suite Dark 4-Blade Hub chrome (`modules/hub/`)
-//! - `apt-info <file.res>`      : Inspects an EA APT `BIGF` movie archive
+//! - `setup-engine` / `setup-bfbc2` : Stages stock BFBC2 -> `engine/` cleanly (read-only on source)
+//! - `build-havok-template`         : Synthesizes PC Havok 5.5.0 template from BFBC2
+//! - `port-bf1943` / `port-bfbc1`   : Pure-Rust console porting drivers (via `xenolith.exe`)
+//! - `bfbc1-ui-parity` / `bfbc1-mainmenu` / `bfbc1-movies` / `bfbc1-sp-loaders` /
+//!   `bfbc1-mp-loaders` / `bfbc1-navmeshes` : Pure-Rust BFBC1 parity pipeline
+//! - `era-ui-input-parity`          : Era-isolated APT menus, minimaps, icons & KBM/gamepad parity
+//! - `sync-cache` / `build-hub` / `apt-info` : Cache manifest merger, Hub chrome builder, APT inspector
 
 mod bfbc1;
+mod console_aimer;
 mod era_parity;
 mod port;
+mod stockmp_ai;
 
 use std::env;
 use std::fs;
@@ -72,6 +76,10 @@ fn main() -> ExitCode {
         "bfbc1-mp-loaders" => bfbc1::wire_bfbc1_mp_loader_screens(&root),
         "bfbc1-navmeshes" => bfbc1::cmd_bfbc1_navmeshes(&root, &args[1..]),
         "era-ui-input-parity" => era_parity::cmd_era_ui_input_parity(&root, &args[1..]),
+        "apply-ai-template" => stockmp_ai::cmd_apply_ai_template(&root, &args[1..]),
+        "apply-sector-offsets" => stockmp_ai::cmd_apply_sector_offsets(&args[1..]),
+        "author-stockmp-ai" => stockmp_ai::cmd_author_stockmp_ai(&root, &args[1..]),
+        "extract-console-aimer" => console_aimer::cmd_extract_console_aimer(&root, &args[1..]),
         other => Err(format!("unknown command `{other}`")),
     };
 
@@ -89,13 +97,24 @@ fn print_usage() {
         "opfor-cli — Project OPFOR pure-Rust toolchain\n\
          usage:\n\
            opfor-cli setup-engine [\"C:\\Games\\Battlefield Bad Company 2\"]\n\
+           opfor-cli setup-bfbc2 --bfbc2 <dir> --opfor <dir>\n\
+           opfor-cli build-havok-template --bfbc2 <dir> --out <tpl.res>\n\
+           opfor-cli port-bf1943 --xbla <pkg> --bfbc2 <dir> --opfor <dir>\n\
+           opfor-cli port-bfbc1 --iso <bfbc1.iso> --bfbc2 <dir> --opfor <dir> [--mode oasis|mp|sp|all]\n\
+           opfor-cli bfbc1-ui-parity --opfor <dir> --bfbc2 <dir> [--iso <bfbc1.iso>]\n\
+           opfor-cli bfbc1-mainmenu --iso <bfbc1.iso> --opfor <dir>\n\
+           opfor-cli bfbc1-movies --iso <bfbc1.iso> [--opfor <dir>]\n\
+           opfor-cli bfbc1-sp-loaders\n\
+           opfor-cli bfbc1-mp-loaders\n\
+           opfor-cli bfbc1-navmeshes --iso <bfbc1.iso> [--opfor <dir>]\n\
+           opfor-cli era-ui-input-parity --era <bfbc1|bf1943> --opfor <dir>\n\
+           opfor-cli apply-ai-template --bundle <level-00.fbrb> [--opfor <dir>] [--pack-grunt]\n\
+           opfor-cli apply-sector-offsets --bundle <level-00.fbrb> --level <LEVEL> --hpd <PathData.hpd> [--layer Infantry|Vehicle]\n\
+           opfor-cli author-stockmp-ai --level <mp_002> [--opfor <dir>] [--bots-per-team 8]\n\
+           opfor-cli extract-console-aimer --pc <mp_common/level-00.fbrb|DefaultHaloAimer.dbx> --xbox <mp_common/level-00.fbrb|DefaultHaloAimer.dbx> [--out config/opfor_console_aimer.ini]\n\
            opfor-cli sync-cache\n\
            opfor-cli build-hub\n\
-           opfor-cli apt-info <SwfMovie.res>\n\
-           opfor-cli bfbc1-ui-parity --opfor <dir> --bfbc2 <dir> [--iso <bfbc1.iso>]\n\
-           opfor-cli bfbc1-movies --iso <bfbc1.iso> [--opfor <dir>]\n\
-           opfor-cli bfbc1-navmeshes --iso <bfbc1.iso> [--opfor <dir>]\n\
-           opfor-cli era-ui-input-parity --era <bfbc1|bf1943> --opfor <dir>"
+           opfor-cli apt-info <SwfMovie.res>"
     );
 }
 
@@ -202,10 +221,10 @@ fn copy_tree(src: &Path, dst: &Path) -> io::Result<usize> {
 }
 
 fn copy_if_changed(src: &Path, dst: &Path) -> io::Result<()> {
-    if let (Ok(sm), Ok(dm)) = (fs::metadata(src), fs::metadata(dst)) {
-        if sm.len() == dm.len() {
-            return Ok(());
-        }
+    if let (Ok(sm), Ok(dm)) = (fs::metadata(src), fs::metadata(dst))
+        && sm.len() == dm.len()
+    {
+        return Ok(());
     }
     fs::copy(src, dst)?;
     Ok(())
@@ -229,11 +248,7 @@ fn copy_tree_clean(src: &Path, dst: &Path) -> io::Result<usize> {
         let entry = entry?;
         let sp = entry.path();
         let dp = dst.join(entry.file_name());
-        if sp.is_dir() {
-            count += copy_tree_clean(&sp, &dp)?;
-        } else {
-            count += copy_tree_clean(&sp, &dp)?;
-        }
+        count += copy_tree_clean(&sp, &dp)?;
     }
     Ok(count)
 }
@@ -346,15 +361,16 @@ fn cmd_apt_info(path: &Path) -> Result<(), String> {
         .unwrap_or(0);
     for e in &entries {
         println!("  {:32} {:8} bytes", e.name, e.data.len());
-        if e.name.to_ascii_lowercase().ends_with(".const") && apt_len > 0 {
-            if let Ok(ci) = opfor_apt::swap::inspect_const(&e.data, apt_len) {
-                println!(
-                    "    -> endian={}, movie_offset=0x{:x}, constants={}",
-                    if ci.big_endian { "BE (Xbox 360)" } else { "LE (PC)" },
-                    ci.movie_offset,
-                    ci.count
-                );
-            }
+        if e.name.to_ascii_lowercase().ends_with(".const")
+            && apt_len > 0
+            && let Ok(ci) = opfor_apt::swap::inspect_const(&e.data, apt_len)
+        {
+            println!(
+                "    -> endian={}, movie_offset=0x{:x}, constants={}",
+                if ci.big_endian { "BE (Xbox 360)" } else { "LE (PC)" },
+                ci.movie_offset,
+                ci.count
+            );
         }
     }
     Ok(())

@@ -172,10 +172,10 @@ fn load_stats(path: &Path) -> BTreeMap<String, f32> {
             if line.is_empty() || line.starts_with(';') || line.starts_with('#') {
                 continue;
             }
-            if let Some((k, v)) = line.split_once('=') {
-                if let Ok(val) = v.trim().parse::<f32>() {
-                    map.insert(k.trim().to_string(), val);
-                }
+            if let Some((k, v)) = line.split_once('=')
+                && let Ok(val) = v.trim().parse::<f32>()
+            {
+                map.insert(k.trim().to_string(), val);
             }
         }
     }

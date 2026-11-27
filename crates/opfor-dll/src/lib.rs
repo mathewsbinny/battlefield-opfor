@@ -68,10 +68,10 @@ fn init(hmodule: HMODULE) {
     let mut installed_mask = ModeId::Bfbc2.bit();
     for m in &modules {
         if m.enabled {
-            if let Some(mid) = m.mode_id() {
-                if m.has_content_bundles() {
-                    installed_mask |= mid.bit();
-                }
+            if let Some(mid) = m.mode_id()
+                && m.has_content_bundles()
+            {
+                installed_mask |= mid.bit();
             }
             log_line(&format!(
                 "module discovered: {} (enabled={}, has_bundles={})",
@@ -97,19 +97,17 @@ fn init(hmodule: HMODULE) {
     if let Ok(txt) = fs::read_to_string(&launch_ini) {
         for raw in txt.lines() {
             let line = raw.trim();
-            if let Some(mode_str) = line.strip_prefix("mode=") {
-                if let Some(mid) = ModeId::from_id(mode_str) {
-                    if let Ok(mut guard) = gamemode::STATE.lock() {
-                        if let Some(st) = guard.as_mut() {
-                            active_mode = st.select_mode(mid);
-                            log_line(&format!("launch.ini preselected mode={}", st.table.spec(active_mode).slug));
-                        }
-                    }
-                }
-            } else if let Some(lvl) = line.strip_prefix("level=") {
-                if !lvl.is_empty() {
-                    log_line(&format!("launch.ini target level={lvl}"));
-                }
+            if let Some(mode_str) = line.strip_prefix("mode=")
+                && let Some(mid) = ModeId::from_id(mode_str)
+                && let Ok(mut guard) = gamemode::STATE.lock()
+                && let Some(st) = guard.as_mut()
+            {
+                active_mode = st.select_mode(mid);
+                log_line(&format!("launch.ini preselected mode={}", st.table.spec(active_mode).slug));
+            } else if let Some(lvl) = line.strip_prefix("level=")
+                && !lvl.is_empty()
+            {
+                log_line(&format!("launch.ini target level={lvl}"));
             }
         }
     }
@@ -136,8 +134,12 @@ fn init(hmodule: HMODULE) {
     }
 }
 
+/// Win32 DLL entry point for the `dinput8.dll` VFS & 4-Mode proxy.
+///
+/// # Safety
+/// Invoked directly by the Windows loader with a valid module handle `hmodule`.
 #[unsafe(no_mangle)]
-pub extern "system" fn DllMain(hmodule: HMODULE, reason: DWORD, _reserved: LPVOID) -> BOOL {
+pub unsafe extern "system" fn DllMain(hmodule: HMODULE, reason: DWORD, _reserved: LPVOID) -> BOOL {
     if reason == DLL_PROCESS_ATTACH {
         unsafe {
             win32::DisableThreadLibraryCalls(hmodule);
@@ -148,6 +150,9 @@ pub extern "system" fn DllMain(hmodule: HMODULE, reason: DWORD, _reserved: LPVOI
 }
 
 /// Real `dinput8.dll` forwarding proxy export required by `BFBC2Game.exe`.
+///
+/// # Safety
+/// Caller must pass valid DirectInput8 COM pointers matching Microsoft's `DirectInput8Create` ABI.
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn DirectInput8Create(
     hinst: HMODULE,
@@ -167,7 +172,7 @@ pub unsafe extern "system" fn DirectInput8Create(
     if real_mod.is_null() {
         return -2147467259; // E_FAIL
     }
-    let proc = unsafe { win32::GetProcAddress(real_mod, b"DirectInput8Create\0".as_ptr()) };
+    let proc = unsafe { win32::GetProcAddress(real_mod, c"DirectInput8Create".as_ptr().cast()) };
     if proc.is_null() {
         return -2147467259;
     }

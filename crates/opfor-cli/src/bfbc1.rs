@@ -8,25 +8,15 @@
 //!   for all 13 BFBC1 Kynogon HPD v1 -> Frostbite 1.5 HPD v2 navmeshes.
 #![deny(unsafe_code)]
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use flate2::Compression;
-use flate2::read::GzDecoder;
-use flate2::write::GzEncoder;
-
-const XDVDFS_MAGIC: &[u8; 20] = b"MICROSOFT*XBOX*MEDIA";
-const XDVDFS_SECTOR: u64 = 2048;
-/// Standard XGD2 / XGD3 game partition start offsets (bytes).
-const XDVDFS_PART_OFFSETS: &[u64] = &[
-    0x0FD9_0000, // XGD2
-    0x0208_0000, // XGD3
-    0x1830_0000, // XGD1
-    0x0000_0000, // Raw XDVDFS image
-];
+use x360_containers::xiso;
+use x360_frostbite::dbx;
+use x360_frostbite::fbrb::{FbrbArchive, FbrbEntry as XbFbrbEntry};
 
 const BFBC1_CAMPAIGN_MOVIES: &[&str] = &[
     "output/xenon/movies/greenacres.res",
@@ -72,7 +62,7 @@ const BFBC1_SP_MOVIE_MAP: &[(&str, &str)] = &[
 ];
 
 // ---------------------------------------------------------------------------
-// Read-only Xbox 360 XDVDFS ISO reader
+// Read-only Xbox 360 XDVDFS ISO reader (delegating to `x360-containers::xiso`)
 // ---------------------------------------------------------------------------
 
 pub struct IsoIndex {
@@ -81,81 +71,23 @@ pub struct IsoIndex {
 
 pub fn index_iso(iso_path: &Path) -> Result<IsoIndex, String> {
     let mut fp = File::open(iso_path).map_err(|e| format!("open ISO {}: {e}", iso_path.display()))?;
-    let mut part_base = None;
-    let mut header = [0u8; 44];
-    for &base in XDVDFS_PART_OFFSETS {
-        if fp.seek(SeekFrom::Start(base + 32 * XDVDFS_SECTOR)).is_err() {
-            continue;
-        }
-        if fp.read_exact(&mut header).is_ok() && &header[0..20] == XDVDFS_MAGIC {
-            part_base = Some(base);
-            break;
-        }
-    }
-    let base = part_base.ok_or_else(|| {
+    let base = xiso::find_partition(&mut fp).map_err(|e| {
         format!(
-            "not a recognized Xbox 360 XDVDFS ISO (MICROSOFT*XBOX*MEDIA not found): {}",
+            "not a recognized Xbox 360 XDVDFS ISO ({e}): {}",
             iso_path.display()
         )
     })?;
-    let root_sector = u32::from_le_bytes(header[20..24].try_into().unwrap()) as u64;
-    let root_size = u32::from_le_bytes(header[24..28].try_into().unwrap()) as usize;
-
+    let (root_sector, root_size) = xiso::root(&mut fp, base)
+        .map_err(|e| format!("read XDVDFS root: {e}"))?
+        .ok_or_else(|| format!("truncated XDVDFS root descriptor: {}", iso_path.display()))?;
+    let (entries, _) = xiso::walk(&mut fp, base, root_sector, root_size, b"")
+        .map_err(|e| format!("walk XDVDFS directory tree: {e}"))?;
     let mut files = BTreeMap::new();
-    walk_xdvdfs_dir(&mut fp, base, root_sector, root_size, "", &mut files)?;
+    for (raw_path, sector, size) in entries {
+        let rel = String::from_utf8_lossy(&raw_path).to_ascii_lowercase();
+        files.insert(rel, (base + u64::from(sector) * xiso::SECTOR, u64::from(size)));
+    }
     Ok(IsoIndex { files })
-}
-
-fn walk_xdvdfs_dir(
-    fp: &mut File,
-    base: u64,
-    sector: u64,
-    size: usize,
-    prefix: &str,
-    out: &mut BTreeMap<String, (u64, u64)>,
-) -> Result<(), String> {
-    if size == 0 {
-        return Ok(());
-    }
-    let mut buf = vec![0u8; size];
-    fp.seek(SeekFrom::Start(base + sector * XDVDFS_SECTOR))
-        .map_err(|e| format!("ISO seek: {e}"))?;
-    fp.read_exact(&mut buf).map_err(|e| format!("ISO read dir: {e}"))?;
-
-    let mut stack = vec![0usize];
-    let mut visited = HashSet::new();
-    while let Some(off) = stack.pop() {
-        if off + 14 > buf.len() || !visited.insert(off) {
-            continue;
-        }
-        let left = u16::from_le_bytes(buf[off..off + 2].try_into().unwrap()) as usize;
-        let right = u16::from_le_bytes(buf[off + 2..off + 4].try_into().unwrap()) as usize;
-        let entry_sector = u32::from_le_bytes(buf[off + 4..off + 8].try_into().unwrap()) as u64;
-        let entry_size = u32::from_le_bytes(buf[off + 8..off + 12].try_into().unwrap()) as u64;
-        let attrs = buf[off + 12];
-        let name_len = buf[off + 13] as usize;
-        if off + 14 + name_len > buf.len() {
-            continue;
-        }
-        let name = String::from_utf8_lossy(&buf[off + 14..off + 14 + name_len]).to_ascii_lowercase();
-        let rel = if prefix.is_empty() {
-            name
-        } else {
-            format!("{prefix}/{name}")
-        };
-        if (attrs & 0x10) != 0 {
-            walk_xdvdfs_dir(fp, base, entry_sector, entry_size as usize, &rel, out)?;
-        } else {
-            out.insert(rel, (base + entry_sector * XDVDFS_SECTOR, entry_size));
-        }
-        if left != 0 && left != 0xFFFF {
-            stack.push(left * 4);
-        }
-        if right != 0 && right != 0xFFFF {
-            stack.push(right * 4);
-        }
-    }
-    Ok(())
 }
 
 pub(crate) fn copy_iso_range(fp: &mut File, offset: u64, size: u64, out: &mut File) -> Result<(), String> {
@@ -175,7 +107,7 @@ pub(crate) fn copy_iso_range(fp: &mut File, offset: u64, size: u64, out: &mut Fi
 }
 
 // ---------------------------------------------------------------------------
-// Frostbite FbRB v2 archive reader & writer
+// Frostbite FbRB v2 archive reader & writer (delegating to `x360-frostbite::fbrb`)
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
@@ -186,142 +118,51 @@ pub(crate) struct FbrbEntry {
     pub(crate) data: Vec<u8>,
 }
 
-fn maybe_gunzip(raw: &[u8]) -> Result<Vec<u8>, String> {
-    if raw.len() >= 2 && raw[0] == 0x1F && raw[1] == 0x8B {
-        let mut dec = GzDecoder::new(raw);
-        let mut out = Vec::new();
-        dec.read_to_end(&mut out)
-            .map_err(|e| format!("gzip decompress: {e}"))?;
-        Ok(out)
-    } else {
-        Ok(raw.to_vec())
-    }
-}
-
 pub(crate) fn read_fbrb(path: &Path) -> Result<(u32, Vec<FbrbEntry>), String> {
     let raw = fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-    if raw.len() < 8 || &raw[0..4] != b"FbRB" {
-        return Err(format!("not an FbRB archive: {}", path.display()));
-    }
-    let meta_len = u32::from_be_bytes(raw[4..8].try_into().unwrap()) as usize;
-    if 8 + meta_len > raw.len() {
-        return Err(format!("truncated FbRB metadata in {}", path.display()));
-    }
-    let meta = maybe_gunzip(&raw[8..8 + meta_len])?;
-    let payload = maybe_gunzip(&raw[8 + meta_len..])?;
-
-    let mut pos = 0usize;
-    let ver = u32::from_be_bytes(meta[pos..pos + 4].try_into().unwrap());
-    pos += 4;
-    let str_len = u32::from_be_bytes(meta[pos..pos + 4].try_into().unwrap()) as usize;
-    pos += 4;
-    let strings = &meta[pos..pos + str_len];
-    pos += str_len;
-    let count = u32::from_be_bytes(meta[pos..pos + 4].try_into().unwrap()) as usize;
-    pos += 4;
-
-    let read_cstr = |off: usize| -> String {
-        let end = strings[off..]
-            .iter()
-            .position(|&b| b == 0)
-            .map(|i| off + i)
-            .unwrap_or(strings.len());
-        strings[off..end].iter().map(|&b| b as char).collect()
-    };
-
-    let mut entries = Vec::with_capacity(count);
-    for _ in 0..count {
-        let fn_off = u32::from_be_bytes(meta[pos..pos + 4].try_into().unwrap()) as usize;
-        let flags = u32::from_be_bytes(meta[pos + 4..pos + 8].try_into().unwrap());
-        let off = u32::from_be_bytes(meta[pos + 8..pos + 12].try_into().unwrap()) as usize;
-        let sz = u32::from_be_bytes(meta[pos + 12..pos + 16].try_into().unwrap()) as usize;
-        let ext_off = u32::from_be_bytes(meta[pos + 20..pos + 24].try_into().unwrap()) as usize;
-        pos += 24;
-        entries.push(FbrbEntry {
-            name: read_cstr(fn_off),
-            ext: read_cstr(ext_off),
-            flags,
-            data: payload[off..off + sz].to_vec(),
-        });
-    }
-    Ok((ver, entries))
+    let arc = FbrbArchive::parse(&raw).map_err(|e| format!("{}: {e}", path.display()))?;
+    let entries = arc
+        .entries
+        .into_iter()
+        .map(|e| FbrbEntry {
+            name: e.path,
+            ext: e.ext,
+            flags: e.flags,
+            data: e.data,
+        })
+        .collect();
+    Ok((arc.version, entries))
 }
 
 pub(crate) fn write_fbrb(path: &Path, version: u32, entries: &[FbrbEntry], compress_payload: bool) -> Result<(), String> {
-    let mut strings = Vec::<u8>::new();
-    let mut str_cache = HashMap::<String, u32>::new();
-    let mut add_str = |s: &str| -> u32 {
-        if let Some(&off) = str_cache.get(s) {
-            return off;
-        }
-        let off = strings.len() as u32;
-        strings.extend(s.chars().map(|c| c as u8));
-        strings.push(0);
-        str_cache.insert(s.to_owned(), off);
-        off
+    let arc = FbrbArchive {
+        version,
+        entries: entries
+            .iter()
+            .map(|e| XbFbrbEntry {
+                path: e.name.clone(),
+                ext: e.ext.clone(),
+                flags: e.flags,
+                data: e.data.clone(),
+            })
+            .collect(),
     };
-
-    let mut payload = Vec::<u8>::new();
-    let mut recs = Vec::with_capacity(entries.len());
-    for e in entries {
-        let fn_off = add_str(&e.name);
-        let ext_off = add_str(&e.ext);
-        let off = payload.len() as u32;
-        payload.extend_from_slice(&e.data);
-        let sz = e.data.len() as u32;
-        recs.push((fn_off, e.flags, off, sz, sz, ext_off));
+    let bytes = arc
+        .to_bytes(compress_payload)
+        .map_err(|e| format!("encode {}: {e}", path.display()))?;
+    if let Some(p) = path.parent() {
+        fs::create_dir_all(p).map_err(|e| format!("mkdir {}: {e}", p.display()))?;
     }
-
-    let mut meta = Vec::<u8>::new();
-    meta.extend_from_slice(&version.to_be_bytes());
-    meta.extend_from_slice(&(strings.len() as u32).to_be_bytes());
-    meta.extend_from_slice(&strings);
-    meta.extend_from_slice(&(recs.len() as u32).to_be_bytes());
-    for (fn_off, flags, off, sz, usz, ext_off) in recs {
-        meta.extend_from_slice(&fn_off.to_be_bytes());
-        meta.extend_from_slice(&flags.to_be_bytes());
-        meta.extend_from_slice(&off.to_be_bytes());
-        meta.extend_from_slice(&sz.to_be_bytes());
-        meta.extend_from_slice(&usz.to_be_bytes());
-        meta.extend_from_slice(&ext_off.to_be_bytes());
-    }
-    // 5-byte Frostbite FbRB v2 footer: 1B compression flag + 4B BE uncompressed payload length
-    meta.push(if compress_payload { 1 } else { 0 });
-    meta.extend_from_slice(&(payload.len() as u32).to_be_bytes());
-
-    let mut gz_meta = GzEncoder::new(Vec::new(), Compression::default());
-    gz_meta
-        .write_all(&meta)
-        .map_err(|e| format!("gzip meta: {e}"))?;
-    let meta_gz = gz_meta.finish().map_err(|e| format!("gzip meta finish: {e}"))?;
-
-    let pay_out = if compress_payload {
-        let mut gz_pay = GzEncoder::new(Vec::new(), Compression::default());
-        gz_pay
-            .write_all(&payload)
-            .map_err(|e| format!("gzip payload: {e}"))?;
-        gz_pay.finish().map_err(|e| format!("gzip payload finish: {e}"))?
-    } else {
-        payload
-    };
-
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
-    }
-    let mut out = File::create(path).map_err(|e| format!("create {}: {e}", path.display()))?;
-    out.write_all(b"FbRB").map_err(|e| e.to_string())?;
-    out.write_all(&(meta_gz.len() as u32).to_be_bytes())
-        .map_err(|e| e.to_string())?;
-    out.write_all(&meta_gz).map_err(|e| e.to_string())?;
-    out.write_all(&pay_out).map_err(|e| e.to_string())?;
-    Ok(())
+    fs::write(path, bytes).map_err(|e| format!("write {}: {e}", path.display()))
 }
 
 // ---------------------------------------------------------------------------
 // Frostbite Localization binary parser & serializer
 // ---------------------------------------------------------------------------
 
-fn parse_loc_bin(b: &[u8]) -> Result<(Vec<u8>, BTreeMap<u32, Vec<u8>>), String> {
+type LocBinTable = (Vec<u8>, BTreeMap<u32, Vec<u8>>);
+
+fn parse_loc_bin(b: &[u8]) -> Result<LocBinTable, String> {
     if b.len() < 20 {
         return Err("localization binary too small".into());
     }
@@ -708,11 +549,11 @@ pub fn wire_bfbc1_sp_loader_movies(opfor: &Path) -> Result<(), String> {
         let (ver, mut entries) = read_fbrb(&loader_path)?;
         let mut changed = false;
         for e in &mut entries {
-            if e.ext == "BinkMemory" {
-                if e.data.len() != raw_bink.len() || e.data.get(..16) != raw_bink.get(..16) {
-                    e.data = raw_bink.to_vec();
-                    changed = true;
-                }
+            if e.ext == "BinkMemory"
+                && (e.data.len() != raw_bink.len() || e.data.get(..16) != raw_bink.get(..16))
+            {
+                e.data = raw_bink.to_vec();
+                changed = true;
             }
         }
         if changed {
@@ -748,10 +589,10 @@ fn patch_mp_description_loading_screens(xml: &str, loading_screens_block: &str) 
         }
     }
     // Clear donor LoadingMovie ref -> null so Frostbite displays LoadingScreens textures
-    if let Some(end_idx) = out.find("\" name=\"LoadingMovie\"") {
-        if let Some(start_idx) = out[..end_idx].rfind("ref=\"") {
-            out.replace_range(start_idx + 5..end_idx, "null");
-        }
+    if let Some(end_idx) = out.find("\" name=\"LoadingMovie\"")
+        && let Some(start_idx) = out[..end_idx].rfind("ref=\"")
+    {
+        out.replace_range(start_idx + 5..end_idx, "null");
     }
     out
 }
@@ -761,37 +602,13 @@ fn patch_mp_description_loading_screens(xml: &str, loading_screens_block: &str) 
 /// from `ui/multiplayer-00.fbrb`, and update `LoadingScreens` / clear `LoadingMovie` in
 /// `cache/startup-00.fbrb` and each level's `level-00.fbrb` description DBX.
 pub fn wire_bfbc1_mp_loader_screens(opfor: &Path) -> Result<(), String> {
-    let xenolith = opfor.join("utility").join("xenolith.exe");
-    if !xenolith.is_file() {
-        return Err(format!("xenolith.exe not found at {}", xenolith.display()));
-    }
     let startup_path = opfor.join("cache").join("startup-00.fbrb");
-    let pid = std::process::id();
-    let p_in = std::env::temp_dir().join(format!("opfor_mpl_in_{pid}.dbx"));
-    let p_xml = std::env::temp_dir().join(format!("opfor_mpl_xml_{pid}.xml"));
-    let p_out = std::env::temp_dir().join(format!("opfor_mpl_out_{pid}.dbx"));
 
     let dbx_to_xml = |bytes: &[u8]| -> Result<String, String> {
-        fs::write(&p_in, bytes).map_err(|e| e.to_string())?;
-        let o = Command::new(&xenolith)
-            .args(["dbx-to-xml", &p_in.display().to_string(), &p_xml.display().to_string()])
-            .output()
-            .map_err(|e| format!("dbx-to-xml: {e}"))?;
-        if !o.status.success() {
-            return Err(format!("dbx-to-xml failed: {}", String::from_utf8_lossy(&o.stderr)));
-        }
-        fs::read_to_string(&p_xml).map_err(|e| e.to_string())
+        dbx::parse(bytes).map(|d| d.to_xml()).map_err(|e| format!("dbx-to-xml: {e}"))
     };
     let xml_to_dbx = |xml: &str| -> Result<Vec<u8>, String> {
-        fs::write(&p_xml, xml.as_bytes()).map_err(|e| e.to_string())?;
-        let o = Command::new(&xenolith)
-            .args(["xml-to-dbx", &p_xml.display().to_string(), &p_out.display().to_string()])
-            .output()
-            .map_err(|e| format!("xml-to-dbx: {e}"))?;
-        if !o.status.success() {
-            return Err(format!("xml-to-dbx failed: {}", String::from_utf8_lossy(&o.stderr)));
-        }
-        fs::read(&p_out).map_err(|e| e.to_string())
+        dbx::from_xml(xml).map(|d| d.to_bytes()).map_err(|e| format!("xml-to-dbx: {e}"))
     };
 
     let mut startup_loaded = if startup_path.is_file() {
@@ -887,9 +704,6 @@ pub fn wire_bfbc1_mp_loader_screens(opfor: &Path) -> Result<(), String> {
         println!("[loader] Updated {} with BFBC1 MP LoadingScreens", startup_path.display());
     }
 
-    let _ = fs::remove_file(&p_in);
-    let _ = fs::remove_file(&p_xml);
-    let _ = fs::remove_file(&p_out);
     println!(
         "[loader] Native BFBC1 MP loading screens wired: {updated_loaders}/{}",
         BFBC1_MP_LEVELS.len()
@@ -1018,9 +832,6 @@ pub fn cmd_bfbc1_mainmenu(default_root: &Path, args: &[String]) -> Result<(), St
     let mut out_entries = Vec::with_capacity(entries.len() + 3);
     let mut stripped = 0usize;
     let mut gunrack_rewritten = 0usize;
-    let p_in = std::env::temp_dir().join(format!("opfor_gr_in_{pid}.dbx"));
-    let p_xml = std::env::temp_dir().join(format!("opfor_gr_xml_{pid}.xml"));
-    let p_out = std::env::temp_dir().join(format!("opfor_gr_out_{pid}.dbx"));
 
     for e in entries {
         if matches!(
@@ -1036,36 +847,23 @@ pub fn cmd_bfbc1_mainmenu(default_root: &Path, args: &[String]) -> Result<(), St
             continue;
         }
         let nl = e.name.to_ascii_lowercase();
-        if nl.starts_with("scenes/ui/gunrack/") && nl.ends_with("/shaders.dbx") {
-            if fs::write(&p_in, &e.data).is_ok()
-                && Command::new(&xenolith)
-                    .args(["dbx-to-xml", &p_in.display().to_string(), &p_xml.display().to_string()])
-                    .output()
-                    .is_ok_and(|o| o.status.success())
-                && let Ok(xml) = fs::read_to_string(&p_xml)
-                && let Some(new_xml) = rewrite_gunrack_shaders_xml(&xml)
-                && fs::write(&p_xml, &new_xml).is_ok()
-                && Command::new(&xenolith)
-                    .args(["xml-to-dbx", &p_xml.display().to_string(), &p_out.display().to_string()])
-                    .output()
-                    .is_ok_and(|o| o.status.success())
-                && let Ok(new_dbx) = fs::read(&p_out)
-            {
-                out_entries.push(FbrbEntry {
-                    name: e.name,
-                    ext: e.ext,
-                    flags: e.flags,
-                    data: new_dbx,
-                });
-                gunrack_rewritten += 1;
-                continue;
-            }
+        if nl.starts_with("scenes/ui/gunrack/")
+            && nl.ends_with("/shaders.dbx")
+            && let Ok(parsed) = dbx::parse(&e.data)
+            && let Some(new_xml) = rewrite_gunrack_shaders_xml(&parsed.to_xml())
+            && let Ok(rebuilt) = dbx::from_xml(&new_xml)
+        {
+            out_entries.push(FbrbEntry {
+                name: e.name,
+                ext: e.ext,
+                flags: e.flags,
+                data: rebuilt.to_bytes(),
+            });
+            gunrack_rewritten += 1;
+            continue;
         }
         out_entries.push(e);
     }
-    let _ = fs::remove_file(&p_in);
-    let _ = fs::remove_file(&p_xml);
-    let _ = fs::remove_file(&p_out);
 
     out_entries.extend(pc_shaders);
     let dest = opfor

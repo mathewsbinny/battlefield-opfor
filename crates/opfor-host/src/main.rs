@@ -6,6 +6,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod ai_runtime;
 mod airraid;
 mod bf1943;
 mod controller;
@@ -17,13 +18,16 @@ mod levelfix;
 mod menu_canvas;
 mod onslaught_hud;
 mod pacific;
+mod padaimer;
 mod pe_loader;
 mod persistence;
+mod probes;
 mod profile;
 mod prompts;
 mod server_browser;
 mod stats_screens;
 mod ui_state;
+mod voprobe;
 mod win32;
 
 use std::ffi::c_void;
@@ -124,6 +128,8 @@ unsafe extern "system" fn veh_logger(ep: *mut ExceptionPointers) -> i32 {
             || rec.code == 0xC000_001D
             || rec.code == 0xC000_0094
             || rec.code == 0xC000_00FD
+            || rec.code == 0xC000_0374
+            || rec.code == 0x8000_0003
         {
             let rw = rec.info[0];
             let target = rec.info[1];
@@ -291,8 +297,10 @@ fn main() {
         controller::init(&root);
         dx_overlay::init(&root);
 
-        // Only hide stock BFBC2 intro movies / title screen for WW2 (1943) and BFBC1
-        let skip_intro = matches!(initial_mode, ModeId::Bf1943 | ModeId::Bfbc1);
+        // Only hide stock BFBC2 intro movies / title screen when the custom DX11 MenuCanvas overlay is enabled;
+        // native APT `mainmenu-00.fbrb` relies on the intro/attract movie flow to advance past `legalDone`.
+        let skip_intro = matches!(initial_mode, ModeId::Bf1943 | ModeId::Bfbc1)
+            && ui_state::custom_menu_enabled();
 
         // Initialize era-aware VFS (isolates per-game HUD/menu/minimap/font overlays to active era),
         // import overrides, offline server browser, and Onslaught HUD.
@@ -347,8 +355,12 @@ fn main() {
         let ar_hooks = unsafe { airraid::install() };
         let prompt_hooks = unsafe { prompts::install() };
         let (era_ui_hooks, era_ui_expected) = unsafe { era_ui::install(initial_mode) };
+        let vo_hooks = unsafe { voprobe::install(&root) };
+        let ai_hooks = unsafe { ai_runtime::install(&root) };
+        let probe_hooks = unsafe { probes::install(&root) };
+        let pad_aimer_on = padaimer::install(&root);
         log_line(&format!(
-            "Tier 1 build-795745 hooks installed: core={patched}/10, browser={sb_hooks}/1, profile={prof_hooks}/2, persistence={persist_hooks}/2, levelfix={lvl_hooks}/{lvl_expected}, pacific={pac_hooks}/5, bf1943={bf43_hooks}/4, airraid={ar_hooks}/2, prompts={prompt_hooks}/1, era_ui={era_ui_hooks}/{era_ui_expected}"
+            "Tier 1 build-795745 hooks installed: core={patched}/10, browser={sb_hooks}/1, profile={prof_hooks}/2, persistence={persist_hooks}/2, levelfix={lvl_hooks}/{lvl_expected}, pacific={pac_hooks}/5, bf1943={bf43_hooks}/4, airraid={ar_hooks}/2, prompts={prompt_hooks}/1, era_ui={era_ui_hooks}/{era_ui_expected}, vo={vo_hooks}, ai={ai_hooks}, probes={probe_hooks}, padaimer={pad_aimer_on}"
         ));
 
         // Enter Frostbite CRT startup (`0x00C52199`: WinMainCRTStartup)
@@ -356,6 +368,7 @@ fn main() {
         let entry: unsafe extern "system" fn() -> i32 =
             unsafe { std::mem::transmute(mapped.entry_point) };
         let exit_code = unsafe { entry() };
+        ai_runtime::dump_unit_counters("exit");
         log_line(&format!("Frostbite exited with code {exit_code}"));
         std::process::exit(exit_code);
     }

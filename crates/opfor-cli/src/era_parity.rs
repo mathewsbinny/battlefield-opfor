@@ -6,7 +6,8 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+
+use opfor_apt::bigf;
 
 use crate::bfbc1::{FbrbEntry, flag_val, read_fbrb, write_fbrb};
 
@@ -66,42 +67,16 @@ pub fn deterministic_guid(seed: &str) -> String {
     )
 }
 
-fn dbx_to_xml(xenolith: &Path, dbx_bytes: &[u8]) -> Result<String, String> {
-    let pid = std::process::id();
-    let tmp_in = std::env::temp_dir().join(format!("opfor_ep_in_{pid}.dbx"));
-    let tmp_out = std::env::temp_dir().join(format!("opfor_ep_out_{pid}.xml"));
-    fs::write(&tmp_in, dbx_bytes).map_err(|e| e.to_string())?;
-    let out = Command::new(xenolith)
-        .args(["dbx-to-xml", &tmp_in.display().to_string(), &tmp_out.display().to_string()])
-        .output()
-        .map_err(|e| format!("xenolith dbx-to-xml: {e}"))?;
-    let _ = fs::remove_file(&tmp_in);
-    if !out.status.success() {
-        let _ = fs::remove_file(&tmp_out);
-        return Err(format!("dbx-to-xml failed: {}", String::from_utf8_lossy(&out.stderr)));
-    }
-    let xml = fs::read_to_string(&tmp_out).map_err(|e| e.to_string())?;
-    let _ = fs::remove_file(&tmp_out);
-    Ok(xml)
+fn dbx_to_xml(_xenolith: &Path, dbx_bytes: &[u8]) -> Result<String, String> {
+    x360_frostbite::dbx::parse(dbx_bytes)
+        .map(|d| d.to_xml())
+        .map_err(|e| format!("dbx-to-xml failed: {e}"))
 }
 
-fn xml_to_dbx(xenolith: &Path, xml: &str) -> Result<Vec<u8>, String> {
-    let pid = std::process::id();
-    let tmp_in = std::env::temp_dir().join(format!("opfor_ep_in_{pid}.xml"));
-    let tmp_out = std::env::temp_dir().join(format!("opfor_ep_out_{pid}.dbx"));
-    fs::write(&tmp_in, xml.as_bytes()).map_err(|e| e.to_string())?;
-    let out = Command::new(xenolith)
-        .args(["xml-to-dbx", &tmp_in.display().to_string(), &tmp_out.display().to_string()])
-        .output()
-        .map_err(|e| format!("xenolith xml-to-dbx: {e}"))?;
-    let _ = fs::remove_file(&tmp_in);
-    if !out.status.success() {
-        let _ = fs::remove_file(&tmp_out);
-        return Err(format!("xml-to-dbx failed: {}", String::from_utf8_lossy(&out.stderr)));
-    }
-    let bytes = fs::read(&tmp_out).map_err(|e| e.to_string())?;
-    let _ = fs::remove_file(&tmp_out);
-    Ok(bytes)
+fn xml_to_dbx(_xenolith: &Path, xml: &str) -> Result<Vec<u8>, String> {
+    x360_frostbite::dbx::from_xml(xml)
+        .map(|d| d.to_bytes())
+        .map_err(|e| format!("xml-to-dbx failed: {e}"))
 }
 
 fn rename_xenon_to_win32_str(s: &str) -> String {
@@ -152,63 +127,7 @@ fn upsert_fbrb(entries: &mut Vec<FbrbEntry>, name: String, ext: String, flags: u
     }
 }
 
-// --- Pure-Rust EA BIGF / APT binary helpers ---
-
-fn parse_bigf(raw: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
-    if raw.len() < 16 || &raw[0..4] != b"BIGF" {
-        return Err("not a BIGF archive".into());
-    }
-    let count = u32::from_be_bytes([raw[8], raw[9], raw[10], raw[11]]) as usize;
-    let mut pos = 16usize;
-    let mut out = Vec::with_capacity(count);
-    for _ in 0..count {
-        if pos + 8 > raw.len() {
-            return Err("truncated BIGF directory".into());
-        }
-        let off = u32::from_be_bytes([raw[pos], raw[pos + 1], raw[pos + 2], raw[pos + 3]]) as usize;
-        let sz = u32::from_be_bytes([raw[pos + 4], raw[pos + 5], raw[pos + 6], raw[pos + 7]]) as usize;
-        pos += 8;
-        let nul = raw[pos..].iter().position(|&b| b == 0).ok_or("unterminated BIGF name")?;
-        let name = String::from_utf8_lossy(&raw[pos..pos + nul]).into_owned();
-        pos += nul + 1;
-        if off + sz > raw.len() {
-            return Err(format!("BIGF member {name} out of bounds"));
-        }
-        out.push((name, raw[off..off + sz].to_vec()));
-    }
-    Ok(out)
-}
-
-fn write_bigf(members: &[(String, Vec<u8>)]) -> Vec<u8> {
-    let mut dir_len = 16usize;
-    for (name, _) in members {
-        dir_len += 8 + name.len() + 1;
-    }
-    let hdr_end = (dir_len + 15) & !15;
-    let mut offsets = Vec::with_capacity(members.len());
-    let mut cur = hdr_end;
-    for (_, data) in members {
-        offsets.push(cur);
-        cur = (cur + data.len() + 15) & !15;
-    }
-    let mut out = vec![0u8; cur];
-    out[0..4].copy_from_slice(b"BIGF");
-    out[4..8].copy_from_slice(&(cur as u32).to_le_bytes());
-    out[8..12].copy_from_slice(&(members.len() as u32).to_be_bytes());
-    out[12..16].copy_from_slice(&(hdr_end as u32).to_be_bytes());
-    let mut pos = 16usize;
-    for ((name, data), &off) in members.iter().zip(offsets.iter()) {
-        out[pos..pos + 4].copy_from_slice(&(off as u32).to_be_bytes());
-        out[pos + 4..pos + 8].copy_from_slice(&(data.len() as u32).to_be_bytes());
-        pos += 8;
-        out[pos..pos + name.len()].copy_from_slice(name.as_bytes());
-        pos += name.len();
-        out[pos] = 0;
-        pos += 1;
-        out[off..off + data.len()].copy_from_slice(data);
-    }
-    out
-}
+// --- Pure-Rust EA BIGF / APT binary helpers (delegating BIGF I/O to `opfor_apt::bigf`) ---
 
 fn read_u32_le(b: &[u8], off: usize) -> u32 {
     u32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]])
@@ -228,11 +147,17 @@ fn read_cstr(b: &[u8], off: usize) -> String {
 
 /// Fix any big-endian `StaticText` (ctype==10) record/glyph arrays left by `xenolith`.
 pub fn fix_apt_stext_endian(res_bytes: &[u8]) -> Result<Vec<u8>, String> {
-    let mut members = parse_bigf(res_bytes)?;
-    let apt_idx = members.iter().position(|(n, _)| n.to_ascii_lowercase().ends_with(".apt")).ok_or("no .apt")?;
-    let const_idx = members.iter().position(|(n, _)| n.to_ascii_lowercase().ends_with(".const")).ok_or("no .const")?;
-    let mv_off = read_u32_le(&members[const_idx].1, 20) as usize;
-    let a = &mut members[apt_idx].1;
+    let mut members = bigf::parse(res_bytes)?;
+    let apt_idx = members
+        .iter()
+        .position(|e| e.name.to_ascii_lowercase().ends_with(".apt"))
+        .ok_or("no .apt")?;
+    let const_idx = members
+        .iter()
+        .position(|e| e.name.to_ascii_lowercase().ends_with(".const"))
+        .ok_or("no .const")?;
+    let mv_off = read_u32_le(&members[const_idx].data, 20) as usize;
+    let a = &mut members[apt_idx].data;
     let n_chars = read_u32_le(a, mv_off + 20) as usize;
     let ctab_off = read_u32_le(a, mv_off + 24) as usize;
     let mut fixed = 0usize;
@@ -271,17 +196,23 @@ pub fn fix_apt_stext_endian(res_bytes: &[u8]) -> Result<Vec<u8>, String> {
     if fixed == 0 {
         return Ok(res_bytes.to_vec());
     }
-    Ok(write_bigf(&members))
+    Ok(bigf::write(&members))
 }
 
 /// Tint BFBC2 `Menu/platform_buttons.res` `ButtonsHolder` (char 67) `aText`/`bText`/`yText`
 /// dynamic PC keycap boxes in-place, leaving Xbox 360 ('Xenon') & PS3 ('Ps3') sprites untouched.
 pub fn tint_platform_buttons_res(res_bytes: &[u8], argb_tint: u32) -> Result<Vec<u8>, String> {
-    let mut members = parse_bigf(res_bytes)?;
-    let apt_idx = members.iter().position(|(n, _)| n.to_ascii_lowercase().ends_with(".apt")).ok_or("no .apt")?;
-    let const_idx = members.iter().position(|(n, _)| n.to_ascii_lowercase().ends_with(".const")).ok_or("no .const")?;
-    let mv_off = read_u32_le(&members[const_idx].1, 20) as usize;
-    let a = &mut members[apt_idx].1;
+    let mut members = bigf::parse(res_bytes)?;
+    let apt_idx = members
+        .iter()
+        .position(|e| e.name.to_ascii_lowercase().ends_with(".apt"))
+        .ok_or("no .apt")?;
+    let const_idx = members
+        .iter()
+        .position(|e| e.name.to_ascii_lowercase().ends_with(".const"))
+        .ok_or("no .const")?;
+    let mv_off = read_u32_le(&members[const_idx].data, 20) as usize;
+    let a = &mut members[apt_idx].data;
     let n_chars = read_u32_le(a, mv_off + 20) as usize;
     let ctab_off = read_u32_le(a, mv_off + 24) as usize;
     if 67 >= n_chars {
@@ -308,7 +239,7 @@ pub fn tint_platform_buttons_res(res_bytes: &[u8], argb_tint: u32) -> Result<Vec
     if tinted != 3 {
         return Err(format!("expected 3 PC keycap boxes in platform_buttons, tinted {tinted}"));
     }
-    Ok(write_bigf(&members))
+    Ok(bigf::write(&members))
 }
 
 const MOUSE_HITTEST_STRINGS: [&str; 24] = [
@@ -393,23 +324,23 @@ const MOUSE_HITTEST_RELOCS: [(usize, u32); 11] = [
 /// Inject the Frame-0 ActionScript 2 `Mouse.addListener` hover/click hit-test into a console-ported
 /// EA APT `SwfMovie` `.res` archive. Idempotent (skips if `__opforMouseInit` is already present).
 pub fn inject_apt_mouse_hittest(res_bytes: &[u8]) -> Result<Vec<u8>, String> {
-    let mut members = parse_bigf(res_bytes)?;
+    let mut members = bigf::parse(res_bytes)?;
     let apt_idx = members
         .iter()
-        .position(|(n, _)| n.to_ascii_lowercase().ends_with(".apt"))
+        .position(|e| e.name.to_ascii_lowercase().ends_with(".apt"))
         .ok_or("no .apt")?;
     let const_idx = members
         .iter()
-        .position(|(n, _)| n.to_ascii_lowercase().ends_with(".const"))
+        .position(|e| e.name.to_ascii_lowercase().ends_with(".const"))
         .ok_or("no .const")?;
 
     // Idempotency check
-    if members[const_idx].1.windows(17).any(|w| w == b"__opforMouseInit\0") {
+    if members[const_idx].data.windows(17).any(|w| w == b"__opforMouseInit\0") {
         return Ok(res_bytes.to_vec());
     }
 
     // 1. Intern our 24 constant strings into `.const` without moving existing strings
-    let cst = &mut members[const_idx].1;
+    let cst = &mut members[const_idx].data;
     if cst.len() < 32 {
         return Err("truncated .const".into());
     }
@@ -456,7 +387,7 @@ pub fn inject_apt_mouse_hittest(res_bytes: &[u8]) -> Result<Vec<u8>, String> {
     write_u32_le(cst, 28, new_tbl_off);
 
     // 2. Append Frame-0 Action item + relocated bytecode + 24 const indices to `.apt`
-    let apt = &mut members[apt_idx].1;
+    let apt = &mut members[apt_idx].data;
     if mv_off + 16 > apt.len() {
         return Err("invalid Movie offset in .apt".into());
     }
@@ -500,7 +431,7 @@ pub fn inject_apt_mouse_hittest(res_bytes: &[u8]) -> Result<Vec<u8>, String> {
     write_u32_le(apt, fp, (ic + 1) as u32);
     write_u32_le(apt, fp + 4, new_ip);
 
-    Ok(write_bigf(&members))
+    Ok(bigf::write(&members))
 }
 
 // --- XML/DBX Parity Transformations ---
@@ -684,6 +615,7 @@ fn make_minimap_texture_xml(lv: &str, part_g: &str, inst_g: &str) -> String {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_era_ingame(
     xenolith: &Path,
     base_fbrb: &Path,
@@ -742,26 +674,26 @@ fn build_era_ingame(
     }
 
     // Upgrade BFBC1 hud_root.dbx: circular minimap + ZoomConversion + merge BFBC2 UINametags
-    if bfbc1_minimap {
-        if let (Some(bc2_xml), Some(hr)) = (
+    if bfbc1_minimap
+        && let (Some(bc2_xml), Some(hr)) = (
             bc2_hud_xml,
             entries.iter_mut().find(|e| e.name.eq_ignore_ascii_case("menu/hud_root.dbx")),
-        ) {
-            let mut xml = dbx_to_xml(xenolith, &hr.data)?;
-            if let (Some(s1), Some(s2)) = (xml.find("<complex name=\"Minimap\">"), bc2_xml.find("<complex name=\"Minimap\">")) {
-                if let (Some(e1_rel), Some(e2_rel)) = (xml[s1..].find("\t\t</complex>"), bc2_xml[s2..].find("\t\t</complex>")) {
-                    let mut bc2_mm = bc2_xml[s2..s2 + e2_rel + 12].to_string();
-                    // Apply BFBC1 authentic Default position/size + Circular radar mask
-                    bc2_mm = bc2_mm
-                        .replacen("<complex name=\"Position\">111/609</complex>", "<complex name=\"Position\">178/583</complex>", 1)
-                        .replacen("<complex name=\"Size\">162/162</complex>", "<complex name=\"Size\">174/174</complex>", 1)
-                        .replacen("<field name=\"ShapeType\">UIMinimapShapeType_Square</field>", "<field name=\"ShapeType\">UIMinimapShapeType_Circle</field>", 1)
-                        .replacen("textures/ui/minimap/minimapoverlaysquare/d052db87-ead1-480a-8e70-4de2bcc138fb", "textures/ui/minimap/minimapoverlay/62512178-e7c0-4530-a548-9688173eda6c", 1);
-                    xml.replace_range(s1..s1 + e1_rel + 12, &bc2_mm);
-                }
-            }
-            hr.data = xml_to_dbx(xenolith, &xml)?;
+        )
+    {
+        let mut xml = dbx_to_xml(xenolith, &hr.data)?;
+        if let (Some(s1), Some(s2)) = (xml.find("<complex name=\"Minimap\">"), bc2_xml.find("<complex name=\"Minimap\">"))
+            && let (Some(e1_rel), Some(e2_rel)) = (xml[s1..].find("\t\t</complex>"), bc2_xml[s2..].find("\t\t</complex>"))
+        {
+            let mut bc2_mm = bc2_xml[s2..s2 + e2_rel + 12].to_string();
+            // Apply BFBC1 authentic Default position/size + Circular radar mask
+            bc2_mm = bc2_mm
+                .replacen("<complex name=\"Position\">111/609</complex>", "<complex name=\"Position\">178/583</complex>", 1)
+                .replacen("<complex name=\"Size\">162/162</complex>", "<complex name=\"Size\">174/174</complex>", 1)
+                .replacen("<field name=\"ShapeType\">UIMinimapShapeType_Square</field>", "<field name=\"ShapeType\">UIMinimapShapeType_Circle</field>", 1)
+                .replacen("textures/ui/minimap/minimapoverlaysquare/d052db87-ead1-480a-8e70-4de2bcc138fb", "textures/ui/minimap/minimapoverlay/62512178-e7c0-4530-a548-9688173eda6c", 1);
+            xml.replace_range(s1..s1 + e1_rel + 12, &bc2_mm);
         }
+        hr.data = xml_to_dbx(xenolith, &xml)?;
     }
 
     // Healthbar 4-color cloning + BF1943 icon remapping
@@ -773,11 +705,11 @@ fn build_era_ingame(
         }
         ic.data = xml_to_dbx(xenolith, &xml)?;
     }
-    if remap_bf43 {
-        if let Some(hr) = entries.iter_mut().find(|e| e.name.eq_ignore_ascii_case("menu/hud_root.dbx")) {
-            let xml = remap_bf43_icons_xml(&dbx_to_xml(xenolith, &hr.data)?);
-            hr.data = xml_to_dbx(xenolith, &xml)?;
-        }
+    if remap_bf43
+        && let Some(hr) = entries.iter_mut().find(|e| e.name.eq_ignore_ascii_case("menu/hud_root.dbx"))
+    {
+        let xml = remap_bf43_icons_xml(&dbx_to_xml(xenolith, &hr.data)?);
+        hr.data = xml_to_dbx(xenolith, &xml)?;
     }
 
     // Tint BFBC2 Menu/platform_buttons.res dynamic PC keycap boxes
@@ -859,11 +791,11 @@ fn patch_bfbc1_levels(xenolith: &Path, opfor: &Path) -> Result<(), String> {
         // 1. ingame-00.fbrb: copy *_minimap.res -> Levels/<lv>/UI/minimapTexture.res
         let (ig_ver, mut ig_entries) = read_fbrb(&ig)?;
         let tex_key = format!("levels/{}/ui/minimaptexture.res", lv.to_ascii_lowercase());
-        if !ig_entries.iter().any(|e| e.name.eq_ignore_ascii_case(&tex_key)) {
-            if let Some(src) = ig_entries.iter().find(|e| e.name.to_ascii_lowercase().ends_with("_minimap.res")).cloned() {
-                upsert_fbrb(&mut ig_entries, format!("Levels/{lv}/UI/minimapTexture.res"), src.ext, src.flags, src.data);
-                write_fbrb(&ig, ig_ver, &ig_entries, true)?;
-            }
+        if !ig_entries.iter().any(|e| e.name.eq_ignore_ascii_case(&tex_key))
+            && let Some(src) = ig_entries.iter().find(|e| e.name.to_ascii_lowercase().ends_with("_minimap.res")).cloned()
+        {
+            upsert_fbrb(&mut ig_entries, format!("Levels/{lv}/UI/minimapTexture.res"), src.ext, src.flags, src.data);
+            write_fbrb(&ig, ig_ver, &ig_entries, true)?;
         }
 
         // 2. level-00.fbrb: MinimapTexture DBX + LevelData/Description refs + dual KBM/Gamepad inputs
@@ -893,19 +825,20 @@ fn patch_bfbc1_levels(xenolith: &Path, opfor: &Path) -> Result<(), String> {
                 let mut xml = dbx_to_xml(xenolith, &e.data)?;
                 let mut e_mod = false;
                 if nl == desc_key && !xml.to_ascii_lowercase().contains(&ref_s) {
-                    if let Some(pos) = xml.find("name=\"MinimapTexture\"") {
-                        if let Some(rs) = xml[..pos].rfind("ref=\"") {
-                            let re_end = rs + 5 + xml[rs + 5..].find('"').unwrap_or(0);
-                            xml.replace_range(rs + 5..re_end, &ref_s);
-                            e_mod = true;
-                        }
-                    }
-                } else if nl == lv_key && !xml.to_ascii_lowercase().contains(&ref_s) {
-                    if let Some(pos) = xml.find("<complex name=\"MinimapCameraOffset\">") {
-                        let ins = format!("\t\t\t<field ref=\"{ref_s}\" name=\"MinimapTexture\" />\n");
-                        xml.insert_str(pos, &ins);
+                    if let Some(pos) = xml.find("name=\"MinimapTexture\"")
+                        && let Some(rs) = xml[..pos].rfind("ref=\"")
+                    {
+                        let re_end = rs + 5 + xml[rs + 5..].find('"').unwrap_or(0);
+                        xml.replace_range(rs + 5..re_end, &ref_s);
                         e_mod = true;
                     }
+                } else if nl == lv_key
+                    && !xml.to_ascii_lowercase().contains(&ref_s)
+                    && let Some(pos) = xml.find("<complex name=\"MinimapCameraOffset\">")
+                {
+                    let ins = format!("\t\t\t<field ref=\"{ref_s}\" name=\"MinimapTexture\" />\n");
+                    xml.insert_str(pos, &ins);
+                    e_mod = true;
                 }
                 if has_input {
                     let (uxml, u, eia) = upgrade_input_xml(&xml);
@@ -949,7 +882,15 @@ fn patch_bfbc1_mainmenu(mainmenu_fbrb: &Path) -> Result<(), String> {
         return Ok(());
     }
     let (ver, mut entries) = read_fbrb(mainmenu_fbrb)?;
-    let mut modified = 0usize;
+    let before_len = entries.len();
+    entries.retain(|e| {
+        !matches!(
+            e.ext.as_str(),
+            "XenonVertexShader" | "XenonPixelShader" | "ShaderDatabase"
+        )
+    });
+    let stripped_xenon = before_len - entries.len();
+    let mut modified = stripped_xenon;
     for e in &mut entries {
         let nl = e.name.to_ascii_lowercase();
         if matches!(nl.as_str(), "menu/main_root.res" | "menu/main_nav.res" | "menu/settings.res") {
@@ -1063,15 +1004,22 @@ pub fn cmd_era_ui_input_parity(default_root: &Path, args: &[String]) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use opfor_apt::bigf::BigfEntry;
 
     #[test]
     fn bigf_roundtrip_preserves_members() {
         let orig = vec![
-            ("test.apt".to_string(), b"Apt Data:74\x1A\0\0\0\0".to_vec()),
-            ("test.const".to_string(), b"Apt constant file\x1A\0\0".to_vec()),
+            BigfEntry {
+                name: "test.apt".to_string(),
+                data: b"Apt Data:74\x1A\0\0\0\0".to_vec(),
+            },
+            BigfEntry {
+                name: "test.const".to_string(),
+                data: b"Apt constant file\x1A\0\0".to_vec(),
+            },
         ];
-        let packed = write_bigf(&orig);
-        let unpacked = parse_bigf(&packed).unwrap();
+        let packed = bigf::write(&orig);
+        let unpacked = bigf::parse(&packed).unwrap();
         assert_eq!(unpacked, orig);
     }
 

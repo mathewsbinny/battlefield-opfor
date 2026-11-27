@@ -30,6 +30,8 @@
 *.dbx
 
 # OS / IDE clutter
+.cargo/config.toml
+config/opfor_console_aimer.ini
 .DS_Store
 Thumbs.db
 __pycache__/

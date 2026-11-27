@@ -89,9 +89,9 @@ fn main() {
         .arg(&res_file)
         .arg(&rc_file)
         .status()
+        && st.success()
+        && res_file.is_file()
     {
-        if st.success() && res_file.is_file() {
-            println!("cargo:rustc-link-arg-bin=OPFOREngine={}", res_file.display());
-        }
+        println!("cargo:rustc-link-arg-bin=OPFOREngine={}", res_file.display());
     }
 }

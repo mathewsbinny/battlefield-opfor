@@ -137,11 +137,10 @@ pub fn collect_fbrb_relpaths(base: &Path, dir: &Path, out: &mut Vec<String>) {
             .extension()
             .and_then(|e| e.to_str())
             .is_some_and(|e| e.eq_ignore_ascii_case("fbrb"))
+            && let Ok(rel) = p.strip_prefix(base)
         {
-            if let Ok(rel) = p.strip_prefix(base) {
-                let s = rel.to_string_lossy().replace('\\', "/");
-                out.push(s);
-            }
+            let s = rel.to_string_lossy().replace('\\', "/");
+            out.push(s);
         }
     }
 }

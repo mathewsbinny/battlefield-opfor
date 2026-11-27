@@ -568,6 +568,10 @@ pub fn init_custom_menu_pref(opfor_root: &std::path::Path) {
     ));
 }
 
+pub fn custom_menu_enabled() -> bool {
+    CUSTOM_MENU_ENABLED.load(std::sync::atomic::Ordering::Acquire)
+}
+
 pub fn current_scene() -> GameScene {
     UI_STATE
         .lock()

@@ -7,14 +7,12 @@
 
 use std::collections::{BTreeMap, HashSet};
 use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::bfbc1::{FbrbEntry, copy_iso_range, flag_val, index_iso, read_fbrb, write_fbrb};
 
 const HAVOK_MAGIC: [u8; 8] = [0x57, 0xE0, 0xE0, 0x57, 0x10, 0xC0, 0xC0, 0x10];
-const STFS_BLOCK_SIZE: u64 = 0x1000;
 
 const MP_LEVELS: &[&str] = &[
     "mp_beachhead_day1",
@@ -414,122 +412,31 @@ pub fn cmd_build_havok_template(args: &[String]) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
-// 3. `port-bf1943` (replaces utility/port_bf1943.py)
+// 3. `port-bf1943` (replaces utility/port_bf1943.py; STFS via `x360-containers::stfs`)
 // ---------------------------------------------------------------------------
 
-fn stfs_block_to_offset(block: u32, first_hash_off: u64, female: bool, total_blocks: u32) -> u64 {
-    let step: u64 = if female { 1 } else { 2 };
-    let b = block as u64;
-    let l0 = (b / 0xAA) + 1;
-    let l1 = if total_blocks > 0xAA { (b / 0x70E4) + 1 } else { 0 };
-    let l2 = if total_blocks > 0x70E4 { 1 } else { 0 };
-    first_hash_off + (b + (l0 + l1 + l2) * step) * STFS_BLOCK_SIZE
-}
-
-fn stfs_next_block(fp: &mut File, block: u32, first_hash_off: u64, female: bool, total_blocks: u32) -> Result<u32, String> {
-    let step: u64 = if female { 1 } else { 2 };
-    let b = block as u64;
-    let l0_idx = b / 0xAA;
-    let entry_idx = b % 0xAA;
-    let l0_before = l0_idx;
-    let l1_before = if total_blocks > 0xAA { (b / 0x70E4) + 1 } else { 0 };
-    let l2_before = if total_blocks > 0x70E4 { 1 } else { 0 };
-    let hash_blk = (l0_before + l1_before + l2_before) * step + l0_idx * 0xAA;
-    let hash_off = first_hash_off + hash_blk * STFS_BLOCK_SIZE + entry_idx * 24 + 21;
-    fp.seek(SeekFrom::Start(hash_off)).map_err(|e| e.to_string())?;
-    let mut nxt = [0u8; 3];
-    if fp.read_exact(&mut nxt).is_err() {
-        return Ok(0x00FF_FFFF);
-    }
-    Ok(((nxt[0] as u32) << 16) | ((nxt[1] as u32) << 8) | (nxt[2] as u32))
-}
-
 fn extract_stfs(pkg_path: &Path, out_dir: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut fp = File::open(pkg_path).map_err(|e| format!("open STFS {}: {e}", pkg_path.display()))?;
-    let mut magic = [0u8; 4];
-    fp.read_exact(&mut magic).map_err(|e| e.to_string())?;
-    if &magic != b"LIVE" && &magic != b"PIRS" && &magic != b"CON " {
+    let fp = File::open(pkg_path).map_err(|e| format!("open STFS {}: {e}", pkg_path.display()))?;
+    let mut pkg = x360_containers::stfs::Package::open(fp)
+        .map_err(|e| format!("Not a valid Xbox 360 STFS package ({e}): {}", pkg_path.display()))?;
+    if !matches!(pkg.header.magic.as_slice(), b"LIVE" | b"PIRS" | b"CON ") {
         return Err(format!("Not an Xbox 360 STFS package: {}", pkg_path.display()));
     }
-    fp.seek(SeekFrom::Start(0x340)).map_err(|e| e.to_string())?;
-    let mut hs_buf = [0u8; 4];
-    fp.read_exact(&mut hs_buf).map_err(|e| e.to_string())?;
-    let header_size = u32::from_be_bytes(hs_buf) as u64;
-    let first_hash_off = (header_size + 0xFFF) & !0xFFF;
 
-    fp.seek(SeekFrom::Start(0x379)).map_err(|e| e.to_string())?;
-    let mut vd = [0u8; 36];
-    fp.read_exact(&mut vd).map_err(|e| e.to_string())?;
-    let female = (vd[2] & 1) == 1;
-    let ft_blocks = u16::from_le_bytes([vd[3], vd[4]]) as usize;
-    let ft_start = (vd[5] as u32) | ((vd[6] as u32) << 8) | ((vd[7] as u32) << 16);
-    let total_blocks = u32::from_be_bytes([vd[28], vd[29], vd[30], vd[31]]);
-
-    let mut ft_data = Vec::with_capacity(ft_blocks * STFS_BLOCK_SIZE as usize);
-    let mut cur = ft_start;
-    let mut blk_buf = [0u8; STFS_BLOCK_SIZE as usize];
-    for _ in 0..ft_blocks {
-        if cur >= 0x00FF_FFFF {
-            break;
-        }
-        fp.seek(SeekFrom::Start(stfs_block_to_offset(cur, first_hash_off, female, total_blocks)))
-            .map_err(|e| e.to_string())?;
-        fp.read_exact(&mut blk_buf).map_err(|e| e.to_string())?;
-        ft_data.extend_from_slice(&blk_buf);
-        cur = stfs_next_block(&mut fp, cur, first_hash_off, female, total_blocks)?;
-    }
-
-    struct StfsRec {
-        name: String,
-        is_dir: bool,
-        contiguous: bool,
-        start_blk: u32,
-        path_idx: i16,
-        file_size: u64,
-    }
-    let mut entries = Vec::new();
-    for chunk in ft_data.chunks_exact(64) {
-        if chunk[0] == 0 {
-            break;
-        }
-        let flags = chunk[40];
-        let name_len = (flags & 0x3F) as usize;
-        let is_dir = (flags & 0x80) != 0;
-        let contiguous = (flags & 0x40) != 0;
-        let name = String::from_utf8_lossy(&chunk[..name_len.min(40)]).into_owned();
-        let start_blk = (chunk[47] as u32) | ((chunk[48] as u32) << 8) | ((chunk[49] as u32) << 16);
-        let path_idx = i16::from_be_bytes([chunk[50], chunk[51]]);
-        let file_size = u32::from_be_bytes([chunk[52], chunk[53], chunk[54], chunk[55]]) as u64;
-        entries.push(StfsRec {
-            name,
-            is_dir,
-            contiguous,
-            start_blk,
-            path_idx,
-            file_size,
-        });
-    }
-
+    let entries = pkg.entries.clone();
     let mut extracted = Vec::new();
-    for (idx, rec) in entries.iter().enumerate() {
-        if rec.is_dir {
+    for rec in &entries {
+        if rec.dir {
             continue;
         }
-        let mut parts = Vec::new();
-        let mut seen = HashSet::new();
-        let mut cur_i = idx as i32;
-        while cur_i >= 0 && (cur_i as usize) < entries.len() && seen.insert(cur_i) {
-            parts.push(entries[cur_i as usize].name.as_str());
-            cur_i = entries[cur_i as usize].path_idx as i32;
-        }
-        parts.reverse();
+        let rel = String::from_utf8_lossy(&rec.path);
         let mut dst = out_dir.to_path_buf();
-        for p in parts {
-            dst.push(p);
+        for part in rel.split('/').filter(|p| !p.is_empty()) {
+            dst.push(part);
         }
         if let Ok(m) = fs::metadata(&dst)
             && m.is_file()
-            && m.len() == rec.file_size
+            && m.len() == u64::from(rec.size)
         {
             extracted.push(dst);
             continue;
@@ -537,22 +444,15 @@ fn extract_stfs(pkg_path: &Path, out_dir: &Path) -> Result<Vec<PathBuf>, String>
         if let Some(p) = dst.parent() {
             fs::create_dir_all(p).map_err(|e| e.to_string())?;
         }
-        let mut out = File::create(&dst).map_err(|e| format!("create {}: {e}", dst.display()))?;
-        let mut rem = rec.file_size;
-        let mut blk = rec.start_blk;
-        while rem > 0 && blk < 0x00FF_FFFF {
-            fp.seek(SeekFrom::Start(stfs_block_to_offset(blk, first_hash_off, female, total_blocks)))
-                .map_err(|e| e.to_string())?;
-            let take = rem.min(STFS_BLOCK_SIZE) as usize;
-            fp.read_exact(&mut blk_buf[..take]).map_err(|e| e.to_string())?;
-            out.write_all(&blk_buf[..take]).map_err(|e| e.to_string())?;
-            rem -= take as u64;
-            blk = if rec.contiguous {
-                blk + 1
-            } else {
-                stfs_next_block(&mut fp, blk, first_hash_off, female, total_blocks)?
-            };
-        }
+        let bytes = pkg
+            .read(
+                u64::from(rec.start),
+                u64::from(rec.count),
+                rec.consecutive,
+                u64::from(rec.size),
+            )
+            .map_err(|e| format!("read STFS entry {rel}: {e}"))?;
+        fs::write(&dst, &bytes).map_err(|e| format!("write {}: {e}", dst.display()))?;
         extracted.push(dst);
     }
     Ok(extracted)
@@ -588,7 +488,7 @@ pub fn cmd_port_bf1943(default_root: &Path, args: &[String]) -> Result<(), Strin
             p.extension().is_some_and(|e| e.eq_ignore_ascii_case("fbrb"))
                 && !p
                     .file_name()
-                    .map_or(false, |n| n.to_string_lossy().to_ascii_lowercase().contains("streaming_sounds"))
+                    .is_some_and(|n| n.to_string_lossy().to_ascii_lowercase().contains("streaming_sounds"))
         })
         .cloned()
         .collect();
@@ -690,7 +590,7 @@ fn guid_to_bytes_le(g: &str) -> Option<[u8; 16]> {
     Some(b)
 }
 
-fn replace_bytes_all(data: &mut Vec<u8>, from: &[u8], to: &[u8]) {
+fn replace_bytes_all(data: &mut [u8], from: &[u8], to: &[u8]) {
     if from.is_empty() || from.len() != to.len() {
         return;
     }
@@ -705,27 +605,8 @@ fn replace_bytes_all(data: &mut Vec<u8>, from: &[u8], to: &[u8]) {
     }
 }
 
-fn extract_two_guids_via_xenolith(xenolith: &Path, dbx_bytes: &[u8]) -> Option<(String, String)> {
-    let pid = std::process::id();
-    let p_in = std::env::temp_dir().join(format!("opfor_sh_in_{pid}.dbx"));
-    let p_xml = std::env::temp_dir().join(format!("opfor_sh_out_{pid}.xml"));
-    fs::write(&p_in, dbx_bytes).ok()?;
-    let ok = run_xenolith(
-        xenolith,
-        &[
-            "dbx-to-xml".into(),
-            p_in.display().to_string(),
-            p_xml.display().to_string(),
-        ],
-    )
-    .is_ok();
-    let _ = fs::remove_file(&p_in);
-    if !ok {
-        let _ = fs::remove_file(&p_xml);
-        return None;
-    }
-    let xml = fs::read_to_string(&p_xml).ok()?;
-    let _ = fs::remove_file(&p_xml);
+fn extract_two_guids_via_xenolith(_xenolith: &Path, dbx_bytes: &[u8]) -> Option<(String, String)> {
+    let xml = x360_frostbite::dbx::parse(dbx_bytes).ok()?.to_xml();
     let mut found = Vec::new();
     let mut rest = xml.as_str();
     while let Some(pos) = rest.find("guid=\"") {
@@ -1159,29 +1040,12 @@ pub fn cmd_port_bfbc1(default_root: &Path, args: &[String]) -> Result<(), String
     Ok(())
 }
 
-fn extract_primary_guid_via_xenolith(xenolith: &Path, dbx_bytes: &[u8]) -> Option<String> {
-    let pid = std::process::id();
-    let p_in = std::env::temp_dir().join(format!("opfor_pg_in_{pid}.dbx"));
-    let p_xml = std::env::temp_dir().join(format!("opfor_pg_out_{pid}.xml"));
-    fs::write(&p_in, dbx_bytes).ok()?;
-    let ok = run_xenolith(
-        xenolith,
-        &["dbx-to-xml".into(), p_in.display().to_string(), p_xml.display().to_string()],
-    )
-    .is_ok();
-    let _ = fs::remove_file(&p_in);
-    if !ok {
-        let _ = fs::remove_file(&p_xml);
-        return None;
-    }
-    let xml = fs::read_to_string(&p_xml).ok()?;
-    let _ = fs::remove_file(&p_xml);
-    let pos = xml.find("primaryInstance=\"")?;
-    let rest = &xml[pos + 17..];
-    if rest.len() >= 36 && rest.as_bytes()[36] == b'"' {
-        return Some(rest[..36].to_ascii_lowercase());
-    }
-    None
+fn extract_primary_guid_via_xenolith(_xenolith: &Path, dbx_bytes: &[u8]) -> Option<String> {
+    let parsed = x360_frostbite::dbx::parse(dbx_bytes).ok()?;
+    parsed
+        .partition()
+        .and_then(|p| p.attr("primaryInstance"))
+        .map(str::to_ascii_lowercase)
 }
 
 fn replace_xml_field_ref(xml: &str, field_name: &str, new_ref: &str) -> String {
@@ -1256,24 +1120,15 @@ fn author_bfbc1_loader_ingame(
                 }
             }
             let desc_want = format!("levels/{lv}_description.dbx");
-            if let Some(d_ent) = ui_ents.iter().find(|e| e.name.eq_ignore_ascii_case(&desc_want)) {
-                let pid = std::process::id();
-                let p_in = std::env::temp_dir().join(format!("opfor_mpdesc_in_{pid}.dbx"));
-                let p_xml = std::env::temp_dir().join(format!("opfor_mpdesc_out_{pid}.xml"));
-                if fs::write(&p_in, &d_ent.data).is_ok()
-                    && run_xenolith(
-                        xenolith,
-                        &["dbx-to-xml".into(), p_in.display().to_string(), p_xml.display().to_string()],
-                    )
-                    .is_ok()
-                    && let Ok(xml) = fs::read_to_string(&p_xml)
-                    && let Some(s) = xml.find("<array name=\"LoadingScreens\">")
+            if let Some(d_ent) = ui_ents.iter().find(|e| e.name.eq_ignore_ascii_case(&desc_want))
+                && let Ok(parsed) = x360_frostbite::dbx::parse(&d_ent.data)
+            {
+                let xml = parsed.to_xml();
+                if let Some(s) = xml.find("<array name=\"LoadingScreens\">")
                     && let Some(e_rel) = xml[s..].find("</array>")
                 {
                     mp_screens_block = Some(xml[s..s + e_rel + "</array>".len()].to_owned());
                 }
-                let _ = fs::remove_file(&p_in);
-                let _ = fs::remove_file(&p_xml);
             }
         }
     }
@@ -1341,23 +1196,13 @@ fn author_bfbc1_loader_ingame(
         let desc_key = format!("levels/{lv}_description.dbx");
         let (ver, mut st_ents) = read_fbrb(startup_fbrb)?;
         let mut patched = false;
-        let pid = std::process::id();
         for e in &mut st_ents {
             if !e.name.eq_ignore_ascii_case(&desc_key) {
                 continue;
             }
-            let p_in = std::env::temp_dir().join(format!("opfor_desc_in_{pid}.dbx"));
-            let p_xml = std::env::temp_dir().join(format!("opfor_desc_out_{pid}.xml"));
-            let p_out = std::env::temp_dir().join(format!("opfor_desc_new_{pid}.dbx"));
-            if fs::write(&p_in, &e.data).is_ok()
-                && run_xenolith(
-                    xenolith,
-                    &["dbx-to-xml".into(), p_in.display().to_string(), p_xml.display().to_string()],
-                )
-                .is_ok()
-                && let Ok(mut xml) = fs::read_to_string(&p_xml)
-            {
-                let orig = xml.clone();
+            if let Ok(parsed) = x360_frostbite::dbx::parse(&e.data) {
+                let orig = parsed.to_xml();
+                let mut xml = orig.clone();
                 if let Some(ref mr) = music_ref {
                     xml = replace_xml_field_ref(&xml, "Music", mr);
                 }
@@ -1377,21 +1222,12 @@ fn author_bfbc1_loader_ingame(
                     xml = replace_xml_field_ref(&xml, "LoadingMovie", "null");
                 }
                 if xml != orig
-                    && fs::write(&p_xml, &xml).is_ok()
-                    && run_xenolith(
-                        xenolith,
-                        &["xml-to-dbx".into(), p_xml.display().to_string(), p_out.display().to_string()],
-                    )
-                    .is_ok()
-                    && let Ok(new_bytes) = fs::read(&p_out)
+                    && let Ok(rebuilt) = x360_frostbite::dbx::from_xml(&xml)
                 {
-                    e.data = new_bytes;
+                    e.data = rebuilt.to_bytes();
                     patched = true;
                 }
             }
-            let _ = fs::remove_file(&p_in);
-            let _ = fs::remove_file(&p_xml);
-            let _ = fs::remove_file(&p_out);
         }
         if patched {
             write_fbrb(startup_fbrb, ver, &st_ents, true)?;

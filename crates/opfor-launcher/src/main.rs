@@ -107,10 +107,11 @@ impl OpforApp {
         let modules = discover_modules(&root.join("modules")).unwrap_or_default();
         let mut mask = ModeId::Bfbc2.bit();
         for m in &modules {
-            if m.enabled && m.has_content_bundles() {
-                if let Some(mid) = m.mode_id() {
-                    mask |= mid.bit();
-                }
+            if m.enabled
+                && m.has_content_bundles()
+                && let Some(mid) = m.mode_id()
+            {
+                mask |= mid.bit();
             }
         }
         let (player_name, clan_tag) = load_profile(&root.join("user").join("profile.ini"));
@@ -147,13 +148,13 @@ impl OpforApp {
     fn refresh_cache(&mut self) {
         let stock_mft = self.root.join("engine").join("Dist").join("win32").join("package.mft");
         let cache_mft = self.root.join("cache").join("package.mft");
-        if stock_mft.is_file() {
-            if let Ok((base, added)) = merge_package_mft(&stock_mft, &self.modules, &cache_mft) {
-                self.status_line = format!(
-                    "VFS cache synced ({base} stock + {added} module bundles) · installed=0x{:02x}",
-                    self.table.installed_mask()
-                );
-            }
+        if stock_mft.is_file()
+            && let Ok((base, added)) = merge_package_mft(&stock_mft, &self.modules, &cache_mft)
+        {
+            self.status_line = format!(
+                "VFS cache synced ({base} stock + {added} module bundles) · installed=0x{:02x}",
+                self.table.installed_mask()
+            );
         }
     }
 
@@ -1075,13 +1076,13 @@ fn load_image_texture(
     candidates: &[PathBuf],
 ) -> Option<egui::TextureHandle> {
     for p in candidates {
-        if let Ok(bytes) = fs::read(p) {
-            if let Ok(img) = image::load_from_memory(&bytes) {
-                let rgba = img.to_rgba8();
-                let size = [rgba.width() as usize, rgba.height() as usize];
-                let color_img = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
-                return Some(ctx.load_texture(name, color_img, egui::TextureOptions::LINEAR));
-            }
+        if let Ok(bytes) = fs::read(p)
+            && let Ok(img) = image::load_from_memory(&bytes)
+        {
+            let rgba = img.to_rgba8();
+            let size = [rgba.width() as usize, rgba.height() as usize];
+            let color_img = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
+            return Some(ctx.load_texture(name, color_img, egui::TextureOptions::LINEAR));
         }
     }
     None

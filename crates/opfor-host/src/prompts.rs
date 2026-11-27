@@ -59,6 +59,7 @@ pub unsafe fn sync_frame() {
                 InputDevice::GamepadPlayStation => (PS3_STR.as_ptr() as u32, "PS3 (PlayStation)"),
             };
             let _ = unsafe { crate::hooks::write_code(PLATFORM_PUSH + 1, &ptr.to_le_bytes()) };
+            crate::padaimer::set_pad_active(code != 0, 1.0, 1.0);
             crate::log_line(&format!("prompts: switched in-game platform prompts -> {label}"));
         }
     }

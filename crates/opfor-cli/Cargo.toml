@@ -9,6 +9,9 @@ name = "opfor-cli"
 path = "src/main.rs"
 
 [dependencies]
-flate2 = "1"
 opfor-apt = { path = "../opfor-apt" }
 opfor-vfs = { path = "../opfor-vfs" }
+# Pinned git dependencies on Xenolith's strictly MIT crates (`x360-xma` excluded via `default-features = false`).
+# Local dev overrides can point `[patch."https://github.com/mathewsbinny/xenolith.git"]` to `../xenolith` in `.cargo/config.toml`.
+x360-containers = { git = "https://github.com/mathewsbinny/xenolith.git", rev = "e2bd23cc6901de513aa5ce6839da715b47e3fd8d" }
+x360-frostbite = { git = "https://github.com/mathewsbinny/xenolith.git", rev = "e2bd23cc6901de513aa5ce6839da715b47e3fd8d", default-features = false }

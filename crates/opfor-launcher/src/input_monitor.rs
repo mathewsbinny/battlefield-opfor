@@ -78,7 +78,7 @@ fn load_xinput() -> Option<XInputGetStateFn> {
         ] {
             let h = unsafe { LoadLibraryA(dll.as_ptr()) };
             if !h.is_null() {
-                let p = unsafe { GetProcAddress(h, b"XInputGetState\0".as_ptr()) };
+                let p = unsafe { GetProcAddress(h, c"XInputGetState".as_ptr().cast()) };
                 if !p.is_null() {
                     return Some(unsafe { std::mem::transmute::<*const c_void, XInputGetStateFn>(p) });
                 }

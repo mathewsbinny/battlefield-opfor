@@ -2,10 +2,12 @@
 //!
 //! Guides the end user through staging their PC BFBC2 runtime (strictly read-only on the
 //! original BFBC2 installation) and porting their Xbox 360 BFBC1 ISO and/or BF1943 XBLA
-//! package via `utility/` (`setup_bfbc2.py`, `port_bfbc1.py`, `port_bf1943.py`, `xenolith.exe`),
+//! package via pure-Rust `utility/` binaries (`opfor-cli.exe` and `xenolith.exe`),
 //! then launches `OPFOR.exe` directly into the Hub.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![deny(unsafe_code)]
+
+mod win_dialog;
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -115,36 +117,11 @@ impl Default for SetupApp {
 }
 
 fn pick_folder(title: &str) -> Option<String> {
-    let script = format!(
-        "Add-Type -AssemblyName System.Windows.Forms; \
-         $d = New-Object System.Windows.Forms.FolderBrowserDialog; \
-         $d.Description = '{}'; \
-         if ($d.ShowDialog() -eq 'OK') {{ Write-Output $d.SelectedPath }}",
-        title.replace('\'', "''")
-    );
-    let out = Command::new("powershell")
-        .args(["-NoProfile", "-STA", "-Command", &script])
-        .output()
-        .ok()?;
-    let s = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-    if s.is_empty() { None } else { Some(s) }
+    win_dialog::pick_folder(title)
 }
 
 fn pick_file(title: &str, filter: &str) -> Option<String> {
-    let script = format!(
-        "Add-Type -AssemblyName System.Windows.Forms; \
-         $d = New-Object System.Windows.Forms.OpenFileDialog; \
-         $d.Title = '{}'; $d.Filter = '{}'; \
-         if ($d.ShowDialog() -eq 'OK') {{ Write-Output $d.FileName }}",
-        title.replace('\'', "''"),
-        filter.replace('\'', "''")
-    );
-    let out = Command::new("powershell")
-        .args(["-NoProfile", "-STA", "-Command", &script])
-        .output()
-        .ok()?;
-    let s = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-    if s.is_empty() { None } else { Some(s) }
+    win_dialog::pick_file(title, filter)
 }
 
 fn run_step(
@@ -399,7 +376,7 @@ impl eframe::App for SetupApp {
             self.launch_hub();
         }
 
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.label(
