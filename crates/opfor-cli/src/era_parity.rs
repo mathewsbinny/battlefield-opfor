@@ -311,6 +311,198 @@ pub fn tint_platform_buttons_res(res_bytes: &[u8], argb_tint: u32) -> Result<Vec
     Ok(write_bigf(&members))
 }
 
+const MOUSE_HITTEST_STRINGS: [&str; 24] = [
+    "_root",
+    "__opforMouseInit",
+    "__opforHoverClip",
+    "Mouse",
+    "addListener",
+    "onMouseMove",
+    "onMouseDown",
+    "_xmouse",
+    "_ymouse",
+    "_visible",
+    "hitTest",
+    "items",
+    "length",
+    "selectItem",
+    "onRollOver",
+    "onPress",
+    "onRelease",
+    "__ml",
+    "__k",
+    "__c",
+    "__arr",
+    "__i",
+    "__it",
+    "__h",
+];
+
+/// Verified 524-byte Frame-0 ActionScript 2 `Mouse.addListener` hover/click hit-test payload
+/// (483B bytecode + 41B inline C-string table; 11 relocatable `u32` offsets relative to `ao`).
+const MOUSE_HITTEST_BLOB: [u8; 524] = [
+    0x88, 0x00, 0x00, 0x00, 0x18, 0x00, 0x00, 0x00, 0xa4, 0x3f, 0x06, 0x00, 0xa2, 0x00, 0x1c, 0xaf,
+    0x01, 0x73, 0x49, 0x9d, 0xcd, 0x01, 0x00, 0x00, 0xa2, 0x00, 0x1c, 0xa2, 0x01, 0x73, 0x4f, 0x59,
+    0x43, 0xa6, 0x00, 0x00, 0x9f, 0x3f, 0x06, 0x00, 0xa2, 0x11, 0x1c, 0xa2, 0x05, 0x9b, 0x00, 0x00,
+    0x9e, 0x3f, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a, 0x01, 0x00, 0x00,
+    0x32, 0x54, 0x76, 0x98, 0x78, 0x56, 0x34, 0x12, 0xa2, 0x00, 0x1c, 0x55, 0x4c, 0x5b, 0x49, 0x9d,
+    0xfc, 0x00, 0x00, 0x00, 0xa6, 0x00, 0x00, 0x00, 0x9a, 0x3f, 0x06, 0x00, 0xa2, 0x00, 0x1c, 0xa2,
+    0x12, 0x1c, 0x4e, 0xa6, 0x96, 0x3f, 0x06, 0x00, 0xa2, 0x13, 0x1c, 0xaf, 0x0b, 0xa6, 0x00, 0x00,
+    0x90, 0x3f, 0x06, 0x00, 0xa2, 0x14, 0x1c, 0x5c, 0x49, 0x9d, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00,
+    0xa2, 0x13, 0x1c, 0xaf, 0x0d, 0x5c, 0x49, 0x9d, 0x74, 0x00, 0x00, 0x00, 0x59, 0xa6, 0x00, 0x00,
+    0x8c, 0x3f, 0x06, 0x00, 0xa2, 0x15, 0x1c, 0xa2, 0x14, 0x1c, 0xaf, 0x0c, 0x48, 0xb8, 0x00, 0x00,
+    0xa8, 0xff, 0xff, 0xff, 0xa2, 0x14, 0x1c, 0xa2, 0x15, 0x1c, 0x4e, 0xa6, 0x87, 0x3f, 0x06, 0x00,
+    0xa2, 0x16, 0x1c, 0xaf, 0x09, 0xb8, 0x00, 0x00, 0x30, 0x00, 0x00, 0x00, 0x73, 0xa2, 0x00, 0x1c,
+    0xaf, 0x08, 0xa2, 0x00, 0x1c, 0xaf, 0x07, 0xb5, 0x03, 0xa2, 0x16, 0x1c, 0xb3, 0x0a, 0xb8, 0x00,
+    0x18, 0x00, 0x00, 0x00, 0xa2, 0x15, 0x1c, 0x5a, 0xa2, 0x13, 0x1c, 0xb2, 0x0d, 0xa2, 0x00, 0x1c,
+    0xa2, 0x02, 0xa2, 0x16, 0x1c, 0x4f, 0x99, 0x00, 0x53, 0x00, 0x00, 0x00, 0xa2, 0x15, 0x1c, 0x50,
+    0xa6, 0x00, 0x00, 0x00, 0x83, 0x3f, 0x06, 0x00, 0x99, 0x00, 0x00, 0x00, 0x94, 0xff, 0xff, 0xff,
+    0xa2, 0x13, 0x1c, 0xaf, 0x09, 0xb8, 0x00, 0x00, 0x40, 0xff, 0xff, 0xff, 0xa2, 0x13, 0x1c, 0xaf,
+    0x0e, 0x5c, 0x49, 0x9d, 0x34, 0xff, 0xff, 0xff, 0x73, 0xa2, 0x00, 0x1c, 0xaf, 0x08, 0xa2, 0x00,
+    0x1c, 0xaf, 0x07, 0xb5, 0x03, 0xa2, 0x13, 0x1c, 0xb3, 0x0a, 0xb8, 0x00, 0x1c, 0xff, 0xff, 0xff,
+    0x59, 0xa2, 0x13, 0x1c, 0xb2, 0x0e, 0xa2, 0x00, 0x1c, 0xa2, 0x02, 0xa2, 0x13, 0x1c, 0x4f, 0x4c,
+    0x5b, 0x49, 0x9d, 0x00, 0x08, 0x00, 0x00, 0x00, 0x17, 0x99, 0x00, 0x00, 0xef, 0xff, 0xff, 0xff,
+    0x17, 0x00, 0x4f, 0xa2, 0x11, 0x1c, 0xa2, 0x06, 0x9b, 0x00, 0x00, 0x00, 0x82, 0x3f, 0x06, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x67, 0x00, 0x00, 0x00, 0x32, 0x54, 0x76, 0x98,
+    0x78, 0x56, 0x34, 0x12, 0xa2, 0x00, 0x1c, 0xaf, 0x02, 0xa6, 0x00, 0x00, 0x7e, 0x3f, 0x06, 0x00,
+    0xa2, 0x17, 0x1c, 0x5c, 0x49, 0x9d, 0x00, 0x00, 0x4e, 0x00, 0x00, 0x00, 0xa2, 0x17, 0x1c, 0xaf,
+    0x09, 0xb8, 0x00, 0x00, 0x42, 0x00, 0x00, 0x00, 0x73, 0xa2, 0x00, 0x1c, 0xaf, 0x08, 0xa2, 0x00,
+    0x1c, 0xaf, 0x07, 0xb5, 0x03, 0xa2, 0x17, 0x1c, 0xb3, 0x0a, 0xb8, 0x00, 0x2a, 0x00, 0x00, 0x00,
+    0xa2, 0x17, 0x1c, 0xaf, 0x0f, 0x5c, 0x49, 0x9d, 0x0c, 0x00, 0x00, 0x00, 0x59, 0xa2, 0x17, 0x1c,
+    0xb2, 0x0f, 0x99, 0x00, 0x12, 0x00, 0x00, 0x00, 0xa2, 0x17, 0x1c, 0xaf, 0x10, 0x5c, 0x49, 0x9d,
+    0x06, 0x00, 0x00, 0x00, 0x59, 0xa2, 0x17, 0x1c, 0xb2, 0x10, 0x00, 0x4f, 0xa2, 0x11, 0x1c, 0x5a,
+    0xa2, 0x03, 0x1c, 0xb2, 0x04, 0x00, 0x5f, 0x5f, 0x68, 0x00, 0x00, 0x5f, 0x5f, 0x69, 0x00, 0x5f,
+    0x5f, 0x69, 0x74, 0x00, 0x5f, 0x5f, 0x69, 0x00, 0x5f, 0x5f, 0x61, 0x72, 0x72, 0x00, 0x5f, 0x5f,
+    0x63, 0x00, 0x5f, 0x5f, 0x6b, 0x00, 0x00, 0x5f, 0x5f, 0x6d, 0x6c, 0x00,
+];
+
+const MOUSE_HITTEST_RELOCS: [(usize, u32); 11] = [
+    (8, 524),
+    (36, 519),
+    (48, 518),
+    (88, 514),
+    (100, 510),
+    (112, 504),
+    (144, 500),
+    (172, 495),
+    (244, 491),
+    (348, 490),
+    (380, 486),
+];
+
+/// Inject the Frame-0 ActionScript 2 `Mouse.addListener` hover/click hit-test into a console-ported
+/// EA APT `SwfMovie` `.res` archive. Idempotent (skips if `__opforMouseInit` is already present).
+pub fn inject_apt_mouse_hittest(res_bytes: &[u8]) -> Result<Vec<u8>, String> {
+    let mut members = parse_bigf(res_bytes)?;
+    let apt_idx = members
+        .iter()
+        .position(|(n, _)| n.to_ascii_lowercase().ends_with(".apt"))
+        .ok_or("no .apt")?;
+    let const_idx = members
+        .iter()
+        .position(|(n, _)| n.to_ascii_lowercase().ends_with(".const"))
+        .ok_or("no .const")?;
+
+    // Idempotency check
+    if members[const_idx].1.windows(17).any(|w| w == b"__opforMouseInit\0") {
+        return Ok(res_bytes.to_vec());
+    }
+
+    // 1. Intern our 24 constant strings into `.const` without moving existing strings
+    let cst = &mut members[const_idx].1;
+    if cst.len() < 32 {
+        return Err("truncated .const".into());
+    }
+    let mv_off = read_u32_le(cst, 20) as usize;
+    let c_cnt = read_u32_le(cst, 24) as usize;
+    let tbl_off = read_u32_le(cst, 28) as usize;
+    if tbl_off + c_cnt * 8 > cst.len() {
+        return Err("invalid .const table".into());
+    }
+    let mut entries: Vec<(u32, u32)> = Vec::with_capacity(c_cnt + 24);
+    for i in 0..c_cnt {
+        let o = tbl_off + i * 8;
+        entries.push((read_u32_le(cst, o), read_u32_le(cst, o + 4)));
+    }
+    let mut pool_idxs = [0u32; 24];
+    for (k, &s) in MOUSE_HITTEST_STRINGS.iter().enumerate() {
+        let existing = entries.iter().enumerate().find_map(|(i, &(t, v))| {
+            if t == 1 && (v as usize) < cst.len() && read_cstr(cst, v as usize) == s {
+                Some(i as u32)
+            } else {
+                None
+            }
+        });
+        if let Some(idx) = existing {
+            pool_idxs[k] = idx;
+        } else {
+            let str_off = cst.len() as u32;
+            cst.extend_from_slice(s.as_bytes());
+            cst.push(0);
+            let idx = entries.len() as u32;
+            entries.push((1, str_off));
+            pool_idxs[k] = idx;
+        }
+    }
+    while cst.len() % 4 != 0 {
+        cst.push(0);
+    }
+    let new_tbl_off = cst.len() as u32;
+    for (t, v) in &entries {
+        cst.extend_from_slice(&t.to_le_bytes());
+        cst.extend_from_slice(&v.to_le_bytes());
+    }
+    write_u32_le(cst, 24, entries.len() as u32);
+    write_u32_le(cst, 28, new_tbl_off);
+
+    // 2. Append Frame-0 Action item + relocated bytecode + 24 const indices to `.apt`
+    let apt = &mut members[apt_idx].1;
+    if mv_off + 16 > apt.len() {
+        return Err("invalid Movie offset in .apt".into());
+    }
+    let fp = read_u32_le(apt, mv_off + 12) as usize;
+    if fp + 8 > apt.len() {
+        return Err("invalid Frame 0 table in .apt".into());
+    }
+    let ic = read_u32_le(apt, fp) as usize;
+    let ip = read_u32_le(apt, fp + 4) as usize;
+    if ip + ic * 4 > apt.len() {
+        return Err("invalid Frame 0 items in .apt".into());
+    }
+    let mut existing_items = Vec::with_capacity(ic + 1);
+    for i in 0..ic {
+        existing_items.push(read_u32_le(apt, ip + i * 4));
+    }
+
+    while apt.len() % 4 != 0 {
+        apt.push(0);
+    }
+    let new_ip = apt.len() as u32;
+    let io = new_ip + ((ic + 1) * 4) as u32;
+    let ao = io + 8;
+
+    for &it in &existing_items {
+        apt.extend_from_slice(&it.to_le_bytes());
+    }
+    apt.extend_from_slice(&io.to_le_bytes());
+    // FrameItem: type=1 (Action), action_offset=ao
+    apt.extend_from_slice(&1u32.to_le_bytes());
+    apt.extend_from_slice(&ao.to_le_bytes());
+
+    let mut blob = MOUSE_HITTEST_BLOB;
+    for &(off, rel) in &MOUSE_HITTEST_RELOCS {
+        write_u32_le(&mut blob, off, ao + rel);
+    }
+    apt.extend_from_slice(&blob);
+    for &idx in &pool_idxs {
+        apt.extend_from_slice(&idx.to_le_bytes());
+    }
+    write_u32_le(apt, fp, (ic + 1) as u32);
+    write_u32_le(apt, fp + 4, new_ip);
+
+    Ok(write_bigf(&members))
+}
+
 // --- XML/DBX Parity Transformations ---
 
 fn map_bc1_input_ref(ref_lower: &str) -> (&'static str, &'static str) {
@@ -522,9 +714,19 @@ fn build_era_ingame(
         if dst_name.to_ascii_lowercase().ends_with(".dbx") {
             patch_xenon_to_win32_bytes(&mut he.data);
         }
-        if dst_name.eq_ignore_ascii_case("menu/igm_sp.res") {
+        if matches!(
+            dst_name.to_ascii_lowercase().as_str(),
+            "menu/igm_sp.res"
+                | "menu/igm_mp.res"
+                | "menu/igm_mp_cq.res"
+                | "menu/settings.res"
+                | "menu/common_screens.res"
+        ) {
             if let Ok(fixed) = fix_apt_stext_endian(&he.data) {
                 he.data = fixed;
+            }
+            if let Ok(injected) = inject_apt_mouse_hittest(&he.data) {
+                he.data = injected;
             }
         }
         upsert_fbrb(&mut entries, dst_name, he.ext, he.flags, he.data);
@@ -739,6 +941,50 @@ fn patch_bfbc1_levels(xenolith: &Path, opfor: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Patch BFBC1 `mainmenu-00.fbrb` in-place: fix StaticText big-endian records, inject Frame-0
+/// ActionScript mouse hover/click hit-test into `main_root`/`main_nav`/`settings`, and tint
+/// `platform_buttons.res` PC keycaps if present.
+fn patch_bfbc1_mainmenu(mainmenu_fbrb: &Path) -> Result<(), String> {
+    if !mainmenu_fbrb.is_file() {
+        return Ok(());
+    }
+    let (ver, mut entries) = read_fbrb(mainmenu_fbrb)?;
+    let mut modified = 0usize;
+    for e in &mut entries {
+        let nl = e.name.to_ascii_lowercase();
+        if matches!(nl.as_str(), "menu/main_root.res" | "menu/main_nav.res" | "menu/settings.res") {
+            let orig = e.data.clone();
+            if let Ok(fixed) = fix_apt_stext_endian(&e.data) {
+                e.data = fixed;
+            }
+            if let Ok(injected) = inject_apt_mouse_hittest(&e.data) {
+                e.data = injected;
+            }
+            if e.data != orig {
+                modified += 1;
+            }
+        } else if nl == "menu/platform_buttons.res" {
+            let orig = e.data.clone();
+            if let Ok(tinted) = tint_platform_buttons_res(&e.data, 0xFFE8_C868) {
+                e.data = tinted;
+                if e.data != orig {
+                    modified += 1;
+                }
+            }
+        }
+    }
+    if modified > 0 {
+        write_fbrb(mainmenu_fbrb, ver, &entries, true)?;
+        println!(
+            "[era-parity] Patched {} ({modified} APT movies with StaticText + Frame-0 mouse hit-test)",
+            mainmenu_fbrb.display()
+        );
+    } else {
+        println!("[era-parity] {} already up to date", mainmenu_fbrb.display());
+    }
+    Ok(())
+}
+
 pub fn cmd_era_ui_input_parity(default_root: &Path, args: &[String]) -> Result<(), String> {
     let opfor = flag_val(args, "--opfor").unwrap_or_else(|| default_root.to_path_buf());
     let era = flag_val(args, "--era")
@@ -786,6 +1032,7 @@ pub fn cmd_era_ui_input_parity(default_root: &Path, args: &[String]) -> Result<(
                     false,
                 )?;
             }
+            patch_bfbc1_mainmenu(&mod_dir.join("menu").join("main").join("mainmenu-00.fbrb"))?;
             patch_bfbc1_levels(&xenolith, &opfor)?;
         }
         "bf1943" => {

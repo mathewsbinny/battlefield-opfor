@@ -18,10 +18,185 @@ use crate::ui_state::{Bf1943Modal, Bf1943Screen, PACIFIC_MAPS, UI_STATE};
 use crate::win32::{self, HWND, LPARAM, WPARAM};
 
 const GWL_WNDPROC: i32 = -4;
+#[repr(C)]
+struct BitmapInfoHeader {
+    biSize: u32,
+    biWidth: i32,
+    biHeight: i32,
+    biPlanes: u16,
+    biBitCount: u16,
+    biCompression: u32,
+    biSizeImage: u32,
+    biXPelsPerMeter: i32,
+    biYPelsPerMeter: i32,
+    biClrUsed: u32,
+    biClrImportant: u32,
+}
+
+#[repr(C)]
+struct IconInfo {
+    fIcon: i32,
+    xHotspot: u32,
+    yHotspot: u32,
+    hbmMask: *mut c_void,
+    hbmColor: *mut c_void,
+}
+
 #[link(name = "user32")]
 unsafe extern "system" {
     fn LoadCursorW(hInstance: *mut c_void, lpCursorName: *const u16) -> *mut c_void;
     fn SetCursor(hCursor: *mut c_void) -> *mut c_void;
+    fn CreateIconIndirect(piconinfo: *const IconInfo) -> *mut c_void;
+}
+
+#[link(name = "gdi32")]
+unsafe extern "system" {
+    fn CreateDIBSection(
+        hdc: *mut c_void,
+        pbmi: *const BitmapInfoHeader,
+        usage: u32,
+        ppvBits: *mut *mut c_void,
+        hSection: *mut c_void,
+        offset: u32,
+    ) -> *mut c_void;
+    fn CreateBitmap(
+        nWidth: i32,
+        nHeight: i32,
+        nPlanes: u32,
+        nBitCount: u32,
+        lpBits: *const c_void,
+    ) -> *mut c_void;
+    fn DeleteObject(ho: *mut c_void) -> i32;
+}
+
+/// Build a crisp 32x32 hardware Win32 `HCURSOR` reskinned after BFBC2's angular tactical cursor
+/// (sharp beveled chevron arrow with dark border, light upper facet, era body fill, and tail notch).
+unsafe fn build_tactical_cursor(border: u32, fill: u32, bevel: u32, accent: u32) -> *mut c_void {
+    const W: i32 = 32;
+    const H: i32 = 32;
+    let bmi = BitmapInfoHeader {
+        biSize: std::mem::size_of::<BitmapInfoHeader>() as u32,
+        biWidth: W,
+        biHeight: -H, // top-down DIB
+        biPlanes: 1,
+        biBitCount: 32,
+        biCompression: 0, // BI_RGB
+        biSizeImage: 0,
+        biXPelsPerMeter: 0,
+        biYPelsPerMeter: 0,
+        biClrUsed: 0,
+        biClrImportant: 0,
+    };
+    let mut bits: *mut c_void = std::ptr::null_mut();
+    let hbm_color = unsafe {
+        CreateDIBSection(
+            std::ptr::null_mut(),
+            &bmi,
+            0,
+            &mut bits,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if hbm_color.is_null() || bits.is_null() {
+        return unsafe { LoadCursorW(std::ptr::null_mut(), 32512usize as *const u16) };
+    }
+
+    // Angular BFBC2-style tactical pointer polygon (hotspot at (1, 1)):
+    // Tip (1,1) -> right wing (17,15) -> inner notch (10,15) -> stem right (14,23)
+    // -> stem bottom (11,24) -> stem left (7,16) -> left wing (1,21) -> Tip (1,1).
+    let poly: &[(f32, f32)] = &[
+        (1.0, 1.0),
+        (17.0, 15.0),
+        (10.5, 15.0),
+        (14.0, 23.0),
+        (11.0, 24.5),
+        (7.2, 16.5),
+        (1.0, 21.0),
+    ];
+    let inside = |px: f32, py: f32| -> bool {
+        let mut c = false;
+        let mut j = poly.len() - 1;
+        for i in 0..poly.len() {
+            let (xi, yi) = poly[i];
+            let (xj, yj) = poly[j];
+            if ((yi > py) != (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi) {
+                c = !c;
+            }
+            j = i;
+        }
+        c
+    };
+
+    let pixels = unsafe { std::slice::from_raw_parts_mut(bits as *mut u32, (W * H) as usize) };
+    pixels.fill(0);
+    for y in 0..H {
+        for x in 0..W {
+            let fx = x as f32 + 0.5;
+            let fy = y as f32 + 0.5;
+            if inside(fx, fy) {
+                // Dark 1px outline if any cardinal neighbor is outside
+                let on_edge = !inside(fx - 1.1, fy)
+                    || !inside(fx + 1.1, fy)
+                    || !inside(fx, fy - 1.1)
+                    || !inside(fx, fy + 1.1);
+                let col = if on_edge {
+                    border
+                } else if y >= 17 && y <= 23 && x >= 8 && x <= 13 {
+                    // Signature tactical accent stripe on the stem
+                    accent
+                } else if (x as f32) < (y as f32 * 0.45 + 3.0) {
+                    // Upper-left crisp metallic bevel
+                    bevel
+                } else {
+                    fill
+                };
+                pixels[(y * W + x) as usize] = col;
+            }
+        }
+    }
+
+    let mask_bits = [0u8; (W * H / 8) as usize];
+    let hbm_mask = unsafe { CreateBitmap(W, H, 1, 1, mask_bits.as_ptr().cast()) };
+    let info = IconInfo {
+        fIcon: 0, // cursor
+        xHotspot: 1,
+        yHotspot: 1,
+        hbmMask: hbm_mask,
+        hbmColor: hbm_color,
+    };
+    let hcur = unsafe { CreateIconIndirect(&info) };
+    unsafe {
+        if !hbm_mask.is_null() {
+            DeleteObject(hbm_mask);
+        }
+        DeleteObject(hbm_color);
+    }
+    if hcur.is_null() {
+        unsafe { LoadCursorW(std::ptr::null_mut(), 32512usize as *const u16) }
+    } else {
+        hcur
+    }
+}
+
+/// Cached era-reskinned tactical cursor (`BFBC1` gold / `BF1943` Pacific cream).
+fn era_tactical_cursor(mode: opfor_vfs::ModeId) -> *mut c_void {
+    static BFBC1_CUR: OnceLock<usize> = OnceLock::new();
+    static BF1943_CUR: OnceLock<usize> = OnceLock::new();
+    let slot = match mode {
+        opfor_vfs::ModeId::Bfbc1 => &BFBC1_CUR,
+        _ => &BF1943_CUR,
+    };
+    *slot.get_or_init(|| unsafe {
+        match mode {
+            // BFBC1: dark olive outline, Bad Company gold fill, pale gold bevel, amber-orange notch
+            opfor_vfs::ModeId::Bfbc1 => {
+                build_tactical_cursor(0xFF14_1510, 0xFFE8_C868, 0xFFFF_F0B8, 0xFFF5_9B1A) as usize
+            }
+            // BF1943: dark ink outline, Pacific parchment cream fill, warm ivory bevel, brass notch
+            _ => build_tactical_cursor(0xFF1A_1812, 0xFFF2_E6C8, 0xFFFF_F8E6, 0xFFC8_9B3C) as usize,
+        }
+    }) as *mut c_void
 }
 
 const WM_SETCURSOR: u32 = 0x0020;
@@ -768,13 +943,18 @@ unsafe extern "system" fn hook_wndproc(
     lparam: LPARAM,
 ) -> isize {
     if msg == WM_SETCURSOR {
+        let active_mode = crate::hooks::STATE
+            .lock()
+            .ok()
+            .and_then(|g| g.as_ref().map(|s| s.active))
+            .unwrap_or(opfor_vfs::ModeId::Bfbc2);
+        let is_era_port = matches!(active_mode, opfor_vfs::ModeId::Bfbc1 | opfor_vfs::ModeId::Bf1943);
         let in_menu = crate::ui_state::current_scene() == crate::ui_state::GameScene::InMenu
             || crate::era_ui::is_ingame_menu_open();
-        if in_menu {
+        if in_menu && (is_era_port || crate::ui_state::is_custom_menu_active()) {
             if crate::ui_state::current_input_device() == crate::ui_state::InputDevice::KeyboardMouse {
                 unsafe {
-                    let arrow = LoadCursorW(std::ptr::null_mut(), 32512usize as *const u16); // IDC_ARROW
-                    SetCursor(arrow);
+                    SetCursor(era_tactical_cursor(active_mode));
                 }
             } else {
                 unsafe { SetCursor(std::ptr::null_mut()) };
