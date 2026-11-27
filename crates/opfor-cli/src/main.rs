@@ -69,6 +69,7 @@ fn main() -> ExitCode {
         "bfbc1-mainmenu" => bfbc1::cmd_bfbc1_mainmenu(&root, &args[1..]),
         "bfbc1-movies" => bfbc1::cmd_bfbc1_movies(&root, &args[1..]),
         "bfbc1-sp-loaders" => bfbc1::wire_bfbc1_sp_loader_movies(&root),
+        "bfbc1-mp-loaders" => bfbc1::wire_bfbc1_mp_loader_screens(&root),
         "bfbc1-navmeshes" => bfbc1::cmd_bfbc1_navmeshes(&root, &args[1..]),
         "era-ui-input-parity" => era_parity::cmd_era_ui_input_parity(&root, &args[1..]),
         other => Err(format!("unknown command `{other}`")),

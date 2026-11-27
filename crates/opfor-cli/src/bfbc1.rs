@@ -40,6 +40,17 @@ const BFBC1_CAMPAIGN_MOVIES: &[&str] = &[
     "output/xenon/movies/credits.res",
 ];
 
+const BFBC1_MP_LEVELS: &[&str] = &[
+    "mp_beachhead_day1",
+    "mp_beachhead_day2",
+    "mp_harbour_day1",
+    "mp_harbour_day2",
+    "mp_ignition_day1",
+    "mp_ignition_day2",
+    "mp_monastery_day1",
+    "mp_monastery_day2",
+];
+
 const BFBC1_SP_LEVELS: &[&str] = &[
     "sp_01_greenacres",
     "sp_02_traitor_of_zabograd",
@@ -714,6 +725,175 @@ pub fn wire_bfbc1_sp_loader_movies(opfor: &Path) -> Result<(), String> {
         }
     }
     println!("[loader] Native BFBC1 SP loading movies updated: {updated}/{}", BFBC1_SP_MOVIE_MAP.len());
+    Ok(())
+}
+
+fn extract_loading_screens_block(xml: &str) -> Option<String> {
+    let start = xml.find("<array name=\"LoadingScreens\">")?;
+    let rest = &xml[start..];
+    let end_rel = rest.find("</array>")?;
+    Some(rest[..end_rel + "</array>".len()].to_owned())
+}
+
+fn patch_mp_description_loading_screens(xml: &str, loading_screens_block: &str) -> String {
+    let mut out = xml.to_owned();
+    // Replace empty or existing LoadingScreens array with BFBC1's native LoadingScreens block
+    if let Some(s) = out.find("<array name=\"LoadingScreens\"") {
+        if let Some(rel_sc) = out[s..].find("/>")
+            && out[s..s + rel_sc].find('>').is_none()
+        {
+            out.replace_range(s..s + rel_sc + 2, loading_screens_block);
+        } else if let Some(rel_end) = out[s..].find("</array>") {
+            out.replace_range(s..s + rel_end + "</array>".len(), loading_screens_block);
+        }
+    }
+    // Clear donor LoadingMovie ref -> null so Frostbite displays LoadingScreens textures
+    if let Some(end_idx) = out.find("\" name=\"LoadingMovie\"") {
+        if let Some(start_idx) = out[..end_idx].rfind("ref=\"") {
+            out.replace_range(start_idx + 5..end_idx, "null");
+        }
+    }
+    out
+}
+
+/// Replace BFBC2's donor `MP01_CQ.res` BinkMovie in all 8 BFBC1 MP `loader-00.fbrb` bundles
+/// with each map's native BFBC1 static loading textures (`MP*_b`, `MP*_m`, `MP*_map`, `MP*_map2`)
+/// from `ui/multiplayer-00.fbrb`, and update `LoadingScreens` / clear `LoadingMovie` in
+/// `cache/startup-00.fbrb` and each level's `level-00.fbrb` description DBX.
+pub fn wire_bfbc1_mp_loader_screens(opfor: &Path) -> Result<(), String> {
+    let xenolith = opfor.join("utility").join("xenolith.exe");
+    if !xenolith.is_file() {
+        return Err(format!("xenolith.exe not found at {}", xenolith.display()));
+    }
+    let startup_path = opfor.join("cache").join("startup-00.fbrb");
+    let pid = std::process::id();
+    let p_in = std::env::temp_dir().join(format!("opfor_mpl_in_{pid}.dbx"));
+    let p_xml = std::env::temp_dir().join(format!("opfor_mpl_xml_{pid}.xml"));
+    let p_out = std::env::temp_dir().join(format!("opfor_mpl_out_{pid}.dbx"));
+
+    let dbx_to_xml = |bytes: &[u8]| -> Result<String, String> {
+        fs::write(&p_in, bytes).map_err(|e| e.to_string())?;
+        let o = Command::new(&xenolith)
+            .args(["dbx-to-xml", &p_in.display().to_string(), &p_xml.display().to_string()])
+            .output()
+            .map_err(|e| format!("dbx-to-xml: {e}"))?;
+        if !o.status.success() {
+            return Err(format!("dbx-to-xml failed: {}", String::from_utf8_lossy(&o.stderr)));
+        }
+        fs::read_to_string(&p_xml).map_err(|e| e.to_string())
+    };
+    let xml_to_dbx = |xml: &str| -> Result<Vec<u8>, String> {
+        fs::write(&p_xml, xml.as_bytes()).map_err(|e| e.to_string())?;
+        let o = Command::new(&xenolith)
+            .args(["xml-to-dbx", &p_xml.display().to_string(), &p_out.display().to_string()])
+            .output()
+            .map_err(|e| format!("xml-to-dbx: {e}"))?;
+        if !o.status.success() {
+            return Err(format!("xml-to-dbx failed: {}", String::from_utf8_lossy(&o.stderr)));
+        }
+        fs::read(&p_out).map_err(|e| e.to_string())
+    };
+
+    let mut startup_loaded = if startup_path.is_file() {
+        Some(read_fbrb(&startup_path)?)
+    } else {
+        None
+    };
+    let mut startup_dirty = false;
+    let mut updated_loaders = 0usize;
+
+    for &lv in BFBC1_MP_LEVELS {
+        let lv_dir = opfor.join("modules").join("bfbc1").join("levels").join(lv);
+        let ui_path = lv_dir.join("ui").join("multiplayer-00.fbrb");
+        let loader_path = lv_dir.join("loader-00.fbrb");
+        if !(ui_path.is_file() && loader_path.is_file()) {
+            continue;
+        }
+        let (_, ui_entries) = read_fbrb(&ui_path)?;
+        let ui_prefix = format!("levels/{lv}/ui/");
+        let desc_key = format!("levels/{lv}_description.dbx");
+
+        // 1. Collect native BFBC1 loading screen textures + their .dbx descriptors from ui/multiplayer-00.fbrb
+        let screen_entries: Vec<FbrbEntry> = ui_entries
+            .iter()
+            .filter(|e| {
+                let nl = e.name.to_ascii_lowercase();
+                nl.starts_with(&ui_prefix) && (e.ext == "ITexture" || nl.ends_with(".dbx"))
+            })
+            .cloned()
+            .collect();
+
+        // Extract BFBC1's native <array name="LoadingScreens">...</array> block
+        let screens_block = ui_entries
+            .iter()
+            .find(|e| e.name.eq_ignore_ascii_case(&desc_key))
+            .and_then(|e| dbx_to_xml(&e.data).ok())
+            .and_then(|xml| extract_loading_screens_block(&xml));
+
+        // 2. Rebuild loader-00.fbrb: strip BFBC2 donor BinkMemory, keep native Wave + add BFBC1 screen textures
+        let (lver, old_loader) = read_fbrb(&loader_path)?;
+        let mut new_loader: Vec<FbrbEntry> = old_loader
+            .into_iter()
+            .filter(|e| {
+                let nl = e.name.to_ascii_lowercase();
+                e.ext != "BinkMemory" && !nl.starts_with(&ui_prefix)
+            })
+            .collect();
+        let added_screens = screen_entries.len();
+        new_loader.extend(screen_entries);
+        write_fbrb(&loader_path, lver, &new_loader, true)?;
+        updated_loaders += 1;
+
+        // 3. Patch LoadingScreens & clear LoadingMovie in cache/startup-00.fbrb + level-00.fbrb
+        if let Some(ref block) = screens_block {
+            if let Some((_, ref mut st_ents)) = startup_loaded {
+                for e in st_ents.iter_mut() {
+                    if e.name.eq_ignore_ascii_case(&desc_key) {
+                        let xml = dbx_to_xml(&e.data)?;
+                        let patched = patch_mp_description_loading_screens(&xml, block);
+                        if patched != xml {
+                            e.data = xml_to_dbx(&patched)?;
+                            startup_dirty = true;
+                        }
+                    }
+                }
+            }
+            let level_path = lv_dir.join("level-00.fbrb");
+            if level_path.is_file() {
+                let (lv_ver, mut lv_ents) = read_fbrb(&level_path)?;
+                let mut lv_dirty = false;
+                for e in &mut lv_ents {
+                    if e.name.eq_ignore_ascii_case(&desc_key) {
+                        let xml = dbx_to_xml(&e.data)?;
+                        let patched = patch_mp_description_loading_screens(&xml, block);
+                        if patched != xml {
+                            e.data = xml_to_dbx(&patched)?;
+                            lv_dirty = true;
+                        }
+                    }
+                }
+                if lv_dirty {
+                    write_fbrb(&level_path, lv_ver, &lv_ents, true)?;
+                }
+            }
+        }
+        println!(
+            "[loader] {lv}: native BFBC1 MP loader-00.fbrb ({added_screens} screen assets, 0 donor BinkMemory)"
+        );
+    }
+
+    if startup_dirty && let Some((st_ver, st_ents)) = startup_loaded {
+        write_fbrb(&startup_path, st_ver, &st_ents, true)?;
+        println!("[loader] Updated {} with BFBC1 MP LoadingScreens", startup_path.display());
+    }
+
+    let _ = fs::remove_file(&p_in);
+    let _ = fs::remove_file(&p_xml);
+    let _ = fs::remove_file(&p_out);
+    println!(
+        "[loader] Native BFBC1 MP loading screens wired: {updated_loaders}/{}",
+        BFBC1_MP_LEVELS.len()
+    );
     Ok(())
 }
 

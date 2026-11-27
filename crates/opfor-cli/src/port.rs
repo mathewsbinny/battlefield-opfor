@@ -1213,8 +1213,12 @@ fn author_bfbc1_loader_ingame(
         .join(if is_sp { "singleplayer-00.fbrb" } else { "multiplayer-00.fbrb" });
     let level_bundle = lv_mod_dir.join("level-00.fbrb");
 
-    // 1. Build native PC loader-00.fbrb from BFBC1's ported loading music + PC BinkMemory movie fallback
+    // 1. Build native PC loader-00.fbrb from BFBC1's ported loading music + native loading media
+    //    - MP: embed BFBC1's static loading screen textures (`Levels/<lv>/UI/*`) from ui/multiplayer-00.fbrb
+    //          (zero BFBC2 donor BinkMemory movies!)
+    //    - SP: embed SP_02 BinkMemory slot placeholder (replaced by native BFBC1 SP movie in `bfbc1-movies`)
     let mut music_ref: Option<String> = None;
+    let mut mp_screens_block: Option<String> = None;
     let mut loader_entries: Vec<FbrbEntry> = Vec::new();
     if ui_bundle.is_file() {
         let (_, ui_ents) = read_fbrb(&ui_bundle)?;
@@ -1243,18 +1247,48 @@ fn author_bfbc1_loader_ingame(
                 });
             }
         }
+        if !is_sp {
+            let ui_prefix = format!("levels/{lv}/ui/");
+            for e in &ui_ents {
+                let nl = e.name.to_ascii_lowercase();
+                if nl.starts_with(&ui_prefix) && (e.ext == "ITexture" || nl.ends_with(".dbx")) {
+                    loader_entries.push(e.clone());
+                }
+            }
+            let desc_want = format!("levels/{lv}_description.dbx");
+            if let Some(d_ent) = ui_ents.iter().find(|e| e.name.eq_ignore_ascii_case(&desc_want)) {
+                let pid = std::process::id();
+                let p_in = std::env::temp_dir().join(format!("opfor_mpdesc_in_{pid}.dbx"));
+                let p_xml = std::env::temp_dir().join(format!("opfor_mpdesc_out_{pid}.xml"));
+                if fs::write(&p_in, &d_ent.data).is_ok()
+                    && run_xenolith(
+                        xenolith,
+                        &["dbx-to-xml".into(), p_in.display().to_string(), p_xml.display().to_string()],
+                    )
+                    .is_ok()
+                    && let Ok(xml) = fs::read_to_string(&p_xml)
+                    && let Some(s) = xml.find("<array name=\"LoadingScreens\">")
+                    && let Some(e_rel) = xml[s..].find("</array>")
+                {
+                    mp_screens_block = Some(xml[s..s + e_rel + "</array>".len()].to_owned());
+                }
+                let _ = fs::remove_file(&p_in);
+                let _ = fs::remove_file(&p_xml);
+            }
+        }
     }
-    let donor_sub = if is_sp { "sp_02" } else { "mp_001" };
-    let donor_loader = bfbc2_dir
-        .join("Dist")
-        .join("win32")
-        .join("levels")
-        .join(donor_sub)
-        .join("loader-00.fbrb");
-    if donor_loader.is_file() {
-        let (_, d_ents) = read_fbrb(&donor_loader)?;
-        if let Some(bink) = d_ents.into_iter().find(|e| e.ext == "BinkMemory") {
-            loader_entries.push(bink);
+    if is_sp {
+        let donor_loader = bfbc2_dir
+            .join("Dist")
+            .join("win32")
+            .join("levels")
+            .join("sp_02")
+            .join("loader-00.fbrb");
+        if donor_loader.is_file() {
+            let (_, d_ents) = read_fbrb(&donor_loader)?;
+            if let Some(bink) = d_ents.into_iter().find(|e| e.ext == "BinkMemory") {
+                loader_entries.push(bink);
+            }
         }
     }
     if !loader_entries.is_empty() {
@@ -1302,8 +1336,8 @@ fn author_bfbc1_loader_ingame(
         write_fbrb(&lv_mod_dir.join("ingame-00.fbrb"), 2, &ingame_entries, true)?;
     }
 
-    // 3. Patch Music & MinimapTexture refs in startup-00.fbrb's levels/<lv>_description.dbx
-    if startup_fbrb.is_file() && (music_ref.is_some() || minimap_ref.is_some()) {
+    // 3. Patch Music, MinimapTexture & MP LoadingScreens refs in startup-00.fbrb's levels/<lv>_description.dbx
+    if startup_fbrb.is_file() && (music_ref.is_some() || minimap_ref.is_some() || mp_screens_block.is_some()) {
         let desc_key = format!("levels/{lv}_description.dbx");
         let (ver, mut st_ents) = read_fbrb(startup_fbrb)?;
         let mut patched = false;
@@ -1329,6 +1363,18 @@ fn author_bfbc1_loader_ingame(
                 }
                 if let Some(ref mmr) = minimap_ref {
                     xml = replace_xml_field_ref(&xml, "MinimapTexture", mmr);
+                }
+                if let Some(ref sb) = mp_screens_block {
+                    if let Some(s) = xml.find("<array name=\"LoadingScreens\"") {
+                        if let Some(rel_sc) = xml[s..].find("/>")
+                            && xml[s..s + rel_sc].find('>').is_none()
+                        {
+                            xml.replace_range(s..s + rel_sc + 2, sb);
+                        } else if let Some(rel_end) = xml[s..].find("</array>") {
+                            xml.replace_range(s..s + rel_end + "</array>".len(), sb);
+                        }
+                    }
+                    xml = replace_xml_field_ref(&xml, "LoadingMovie", "null");
                 }
                 if xml != orig
                     && fs::write(&p_xml, &xml).is_ok()
