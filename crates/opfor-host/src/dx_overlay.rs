@@ -21,6 +21,9 @@ const GWL_WNDPROC: i32 = -4;
 const WM_MOUSEMOVE: u32 = 0x0200;
 const WM_LBUTTONDOWN: u32 = 0x0201;
 const WM_LBUTTONDBLCLK: u32 = 0x0203;
+const WM_RBUTTONDOWN: u32 = 0x0204;
+const WM_MOUSEWHEEL: u32 = 0x020A;
+const WM_INPUT: u32 = 0x00FF;
 const WM_KEYDOWN: u32 = 0x0100;
 const WM_CHAR: u32 = 0x0102;
 const VK_LEFT: usize = 0x25;
@@ -264,6 +267,7 @@ pub unsafe fn on_game_window_created(hwnd: HWND) {
         let prev = unsafe { SetWindowLongW(hwnd, GWL_WNDPROC, hook_wndproc as *const () as isize) };
         if prev != 0 {
             let _ = ORIG_WNDPROC.set(unsafe { std::mem::transmute::<isize, WndProcFn>(prev) });
+            crate::controller::register_raw_input(hwnd);
             crate::log_line(&format!("dx_overlay: subclassed game WndProc on hwnd={hwnd:p}"));
         }
         unsafe { install_dx11_present_hook(hwnd) };
@@ -756,8 +760,20 @@ unsafe extern "system" fn hook_wndproc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> isize {
-    if matches!(msg, WM_MOUSEMOVE | WM_LBUTTONDOWN | WM_KEYDOWN) {
+    if msg == WM_INPUT {
+        crate::controller::handle_wm_input(lparam);
+    } else if matches!(msg, WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MOUSEWHEEL | WM_KEYDOWN) {
         crate::ui_state::note_kbm_input();
+    } else if msg == WM_MOUSEMOVE {
+        static LAST_MX: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(i32::MIN);
+        static LAST_MY: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(i32::MIN);
+        let mx = (lparam & 0xFFFF) as i16 as i32;
+        let my = ((lparam >> 16) & 0xFFFF) as i16 as i32;
+        let px = LAST_MX.swap(mx, std::sync::atomic::Ordering::Relaxed);
+        let py = LAST_MY.swap(my, std::sync::atomic::Ordering::Relaxed);
+        if px != i32::MIN && ((mx - px).abs() > 6 || (my - py).abs() > 6) {
+            crate::ui_state::note_kbm_input();
+        }
     }
 
     if crate::ui_state::is_custom_menu_active() {

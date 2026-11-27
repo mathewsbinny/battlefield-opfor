@@ -2238,6 +2238,7 @@ impl MenuCanvas {
 
         let dev_title = match st.input_device {
             InputDevice::GamepadXbox => "XBOX 360 CONTROLS",
+            InputDevice::GamepadPlayStation => "PLAYSTATION CONTROLS",
             InputDevice::KeyboardMouse => "KEYBOARD & MOUSE",
         };
         if !self.subheadline_bar_img.is_null() {
@@ -2254,6 +2255,13 @@ impl MenuCanvas {
                 "(B) Button          — Back / Close Pop-Up",
                 "(Y) Button          — Switch USMC / IJN Preview",
                 "In-Match            — Full Xenon Prompt Mode Active",
+            ],
+            InputDevice::GamepadPlayStation => &[
+                "D-Pad / Left Stick  — Navigate Menus & Selectors",
+                "(×) Cross           — Confirm / Deploy",
+                "(○) Circle          — Back / Close Pop-Up",
+                "(△) Triangle        — Switch USMC / IJN Preview",
+                "In-Match            — Full PS3 Prompt Mode Active",
             ],
             InputDevice::KeyboardMouse => &[
                 "Up / Down / Mouse   — Navigate Menus",
@@ -2365,6 +2373,29 @@ impl MenuCanvas {
                     draw_prompt_label(g, cx + 28.0, cy, 150.0, "SWITCH FACTION");
                 }
                 draw_prompt_label(g, 1048.0, cy, 200.0, "XBOX 360 CONTROLLER");
+            }
+            InputDevice::GamepadPlayStation => {
+                self.draw_xbox_badge(g, cx, cy, argb(255, 90, 145, 235), "×");
+                draw_prompt_label(g, cx + 28.0, cy, 90.0, "SELECT");
+                cx += 118.0;
+
+                if show_back {
+                    self.draw_xbox_badge(g, cx, cy, argb(255, 225, 85, 85), "○");
+                    draw_prompt_label(g, cx + 28.0, cy, 80.0, "BACK");
+                    self.hit_rects.push(HitRect {
+                        x: cx,
+                        y: cy - 4.0,
+                        w: 100.0,
+                        h: 30.0,
+                        action: MenuClickAction::GoBack,
+                    });
+                    cx += 108.0;
+                }
+                if show_y {
+                    self.draw_xbox_badge(g, cx, cy, argb(255, 75, 200, 145), "△");
+                    draw_prompt_label(g, cx + 28.0, cy, 150.0, "SWITCH FACTION");
+                }
+                draw_prompt_label(g, 1020.0, cy, 228.0, "PLAYSTATION CONTROLLER");
             }
             InputDevice::KeyboardMouse => {
                 self.draw_kbm_badge(g, cx, cy, "ENTER / CLICK", 108.0);

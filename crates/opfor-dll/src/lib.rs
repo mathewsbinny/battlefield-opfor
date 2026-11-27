@@ -89,17 +89,10 @@ fn init(hmodule: HMODULE) {
         "4-mode table ready; extern.opforInstalledModes=0x{installed_mask:02x}"
     ));
 
-    let router = VfsRouter::new(&root, &modules);
-    let patched = iat_vfs::install(router, false);
-    log_line(&format!("Win32 IAT VFS hooks installed: {patched}/5 slots"));
-
-    let net_slots = net_guard::install();
-    log_line(&format!("Offline network guard installed: {net_slots} IAT slots"));
-
-    let brand_slots = window_brand::install(&root);
-    log_line(&format!("Window branding (opfor.ico + era title) installed: {brand_slots} IAT slots"));
-
-    // Read handoff written by OPFOR.exe frontend (`config/launch.ini`)
+    // Read handoff written by OPFOR.exe frontend (`config/launch.ini`) BEFORE creating VfsRouter
+    // so per-era ingame APT menus (`levels/sp_common/ingame-00.fbrb`, `levels/mp_common/ingame-00.fbrb`,
+    // `menu/hud/*`, `menu/shared/fonts_*`) are strictly isolated to the launched game!
+    let mut active_mode = ModeId::Bfbc2;
     let launch_ini = root.join("config").join("launch.ini");
     if let Ok(txt) = fs::read_to_string(&launch_ini) {
         for raw in txt.lines() {
@@ -108,8 +101,8 @@ fn init(hmodule: HMODULE) {
                 if let Some(mid) = ModeId::from_id(mode_str) {
                     if let Ok(mut guard) = gamemode::STATE.lock() {
                         if let Some(st) = guard.as_mut() {
-                            let resolved = st.select_mode(mid);
-                            log_line(&format!("launch.ini preselected mode={}", st.table.spec(resolved).slug));
+                            active_mode = st.select_mode(mid);
+                            log_line(&format!("launch.ini preselected mode={}", st.table.spec(active_mode).slug));
                         }
                     }
                 }
@@ -120,6 +113,20 @@ fn init(hmodule: HMODULE) {
             }
         }
     }
+
+    let skip_intro = matches!(active_mode, ModeId::Bfbc1 | ModeId::Bf1943);
+    let router = VfsRouter::for_era(&root, &modules, active_mode, skip_intro);
+    let patched = iat_vfs::install(router, false);
+    log_line(&format!(
+        "Win32 IAT VFS hooks installed: {patched}/5 slots (era={:?}, skip_intro={skip_intro})",
+        active_mode
+    ));
+
+    let net_slots = net_guard::install();
+    log_line(&format!("Offline network guard installed: {net_slots} IAT slots"));
+
+    let brand_slots = window_brand::install(&root);
+    log_line(&format!("Window branding (opfor.ico + era title) installed: {brand_slots} IAT slots"));
 
     let is_bc2 = unsafe { gamemode::is_bfbc2_795745() };
     log_line(&format!("BFBC2Game.exe build 795745 signature match: {is_bc2}"));

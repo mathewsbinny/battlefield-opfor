@@ -171,6 +171,94 @@ pub fn cmd_setup_bfbc2(default_root: &Path, args: &[String]) -> Result<(), Strin
             }
         }
     }
+    if let Err(e) = enrich_onslaught_loader_ingame(&bfbc2_dir, &opfor_dir) {
+        println!("[Onslaught] warning: could not enrich loader/ingame bundles: {e}");
+    }
+    Ok(())
+}
+
+/// Ensure all pre-staged Onslaught levels (`modules/onslaught/levels/ons_mp_*`) have
+/// native PC `Loading_Music_MP_0x_Wave.{res,dbx}` in `loader-00.fbrb` and
+/// `Levels/MP_00x/UI/minimapTexture.res` in `ingame-00.fbrb` sourced from stock PC BFBC2.
+fn enrich_onslaught_loader_ingame(bfbc2_dir: &Path, opfor_dir: &Path) -> Result<(), String> {
+    let ons_root = opfor_dir.join("modules").join("onslaught").join("levels");
+    if !ons_root.is_dir() {
+        return Ok(());
+    }
+    let ons_pairs = [
+        ("ons_mp_002", "mp_002", "loading_music_mp_02_wave"),
+        ("ons_mp_004", "mp_004", "loading_music_mp_04_wave"),
+        ("ons_mp_005", "mp_005", "loading_music_mp_05_wave"),
+        ("ons_mp_005gr", "mp_005", "loading_music_mp_05_wave"),
+        ("ons_mp_008", "mp_008", "loading_music_mp_08_wave"),
+    ];
+    let mut updated = 0usize;
+    for (ons_lv, base_mp, music_stem) in ons_pairs {
+        let ldir = ons_root.join(ons_lv);
+        if !ldir.is_dir() {
+            continue;
+        }
+        let dst_loader = ldir.join("loader-00.fbrb");
+        if dst_loader.is_file() {
+            let (ver, mut ents) = read_fbrb(&dst_loader)?;
+            let mut seen: HashSet<String> = ents.iter().map(|e| e.name.to_ascii_lowercase()).collect();
+            let mut changed = false;
+            for src_dir in [
+                bfbc2_dir.join("Dist").join("win32").join("levels").join(base_mp),
+                bfbc2_dir.join("Package").join("levels").join(base_mp),
+                bfbc2_dir.join("Package").join("levels").join(format!("{base_mp}cq")),
+            ] {
+                let src_loader = src_dir.join("loader-00.fbrb");
+                if !src_loader.is_file() {
+                    continue;
+                }
+                if let Ok((_, src_ents)) = read_fbrb(&src_loader) {
+                    for e in src_ents {
+                        let nl = e.name.to_ascii_lowercase();
+                        if nl.contains(music_stem) && (nl.ends_with(".res") || nl.ends_with(".dbx")) && seen.insert(nl) {
+                            ents.push(e);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if changed {
+                write_fbrb(&dst_loader, ver, &ents, true)?;
+                updated += 1;
+            }
+        }
+        let dst_ingame = ldir.join("ingame-00.fbrb");
+        if dst_ingame.is_file() {
+            let (ver, mut ents) = read_fbrb(&dst_ingame)?;
+            let mut seen: HashSet<String> = ents.iter().map(|e| e.name.to_ascii_lowercase()).collect();
+            let mut changed = false;
+            for src_dir in [
+                bfbc2_dir.join("Dist").join("win32").join("levels").join(base_mp),
+                bfbc2_dir.join("Package").join("levels").join(base_mp),
+            ] {
+                let src_ingame = src_dir.join("ingame-00.fbrb");
+                if !src_ingame.is_file() {
+                    continue;
+                }
+                if let Ok((_, src_ents)) = read_fbrb(&src_ingame) {
+                    for e in src_ents {
+                        let nl = e.name.to_ascii_lowercase();
+                        if e.ext == "ITexture" && nl.ends_with("/ui/minimaptexture.res") && seen.insert(nl) {
+                            ents.push(e);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if changed {
+                write_fbrb(&dst_ingame, ver, &ents, true)?;
+                updated += 1;
+            }
+        }
+    }
+    if updated > 0 {
+        println!("[Onslaught] Enriched {updated} loader/ingame bundle(s) with native PC music & minimaps.");
+    }
     Ok(())
 }
 
@@ -533,6 +621,24 @@ pub fn cmd_port_bf1943(default_root: &Path, args: &[String]) -> Result<(), Strin
         println!("  [{}/{}] {}: {out}", idx + 1, fbrbs.len(), rel.display());
     }
 
+    // Stage ported BF1943 fonts & HUD bundles into modules/bf1943/menu/{shared,hud}/
+    for (src_rel, dst_rel) in [
+        ("dist/xenon/menu/shared/fonts_us-00.fbrb", "menu/shared/fonts_us-00.fbrb"),
+        ("dist/xenon/menu/hud/hud_multiplayer_cq-00.fbrb", "menu/hud/hud_multiplayer_cq-00.fbrb"),
+        ("dist/xenon/menu/hud/hud_multiplayer-00.fbrb", "menu/hud/hud_multiplayer-00.fbrb"),
+        ("dist/xenon/menu/hud/hud_singleplayer-00.fbrb", "menu/hud/hud_singleplayer-00.fbrb"),
+    ] {
+        let s = mod_dir.join("ported").join(src_rel.replace('/', "\\"));
+        let d = mod_dir.join(dst_rel.replace('/', "\\"));
+        if s.is_file() {
+            if let Some(p) = d.parent() {
+                let _ = fs::create_dir_all(p);
+            }
+            let _ = fs::copy(&s, &d);
+            println!("  [BF1943] Staged {} -> {}", src_rel, d.display());
+        }
+    }
+
     println!("[Stage 3/3] Exporting BF1943 Hub logo, menu art, fonts, and UI SFX...");
     let msg = run_xenolith(
         &xenolith,
@@ -761,7 +867,13 @@ pub fn cmd_port_bfbc1(default_root: &Path, args: &[String]) -> Result<(), String
             copy_iso_range(&mut fp, off, sz, &mut out)?;
         }
         for lv in &levels {
-            for sub in ["level-00.fbrb", "terrain-00.fbrb"] {
+            for sub in [
+                "level-00.fbrb",
+                "terrain-00.fbrb",
+                "vo/en-00.fbrb",
+                "ui/singleplayer-00.fbrb",
+                "ui/multiplayer-00.fbrb",
+            ] {
                 let rel = format!("dist/xenon/levels/{lv}/{sub}");
                 if let Some(&(off, sz)) = iso_idx.files.get(&rel) {
                     let dst = raw_dir.join(rel.replace('/', "\\"));
@@ -807,6 +919,31 @@ pub fn cmd_port_bfbc1(default_root: &Path, args: &[String]) -> Result<(), String
                 ],
             )?;
             println!("  terrain-00: {out_ter}");
+        }
+
+        for sub in ["vo/en-00.fbrb", "ui/singleplayer-00.fbrb", "ui/multiplayer-00.fbrb"] {
+            let raw_sub = raw_dir
+                .join("dist")
+                .join("xenon")
+                .join("levels")
+                .join(lv)
+                .join(sub.replace('/', "\\"));
+            if raw_sub.is_file() {
+                let dst_sub = lv_mod_dir.join(sub.replace('/', "\\"));
+                if let Some(p) = dst_sub.parent() {
+                    fs::create_dir_all(p).map_err(|e| e.to_string())?;
+                }
+                let out_sub = run_xenolith(
+                    &xenolith,
+                    &[
+                        "port-fbrb".into(),
+                        "--bfbc1".into(),
+                        raw_sub.display().to_string(),
+                        dst_sub.display().to_string(),
+                    ],
+                )?;
+                println!("  {sub}: {out_sub}");
+            }
         }
 
         if raw_lvl.is_file() {
@@ -933,13 +1070,18 @@ pub fn cmd_port_bfbc1(default_root: &Path, args: &[String]) -> Result<(), String
             );
         }
 
-        let donor_sub = if lv.starts_with("sp_") { "sp_02" } else { "mp_001" };
-        let standalone_donor = bfbc2_dir.join("Dist").join("win32").join("levels").join(donor_sub);
-        for sub in ["loader-00.fbrb", "ingame-00.fbrb"] {
-            let dst_sub = lv_mod_dir.join(sub);
-            let src_sub = standalone_donor.join(sub);
-            if !dst_sub.is_file() && src_sub.is_file() {
-                fs::copy(&src_sub, &dst_sub).map_err(|e| e.to_string())?;
+        // Author native PC loader-00.fbrb (BFBC1 ported loading music + PC Bink fallback)
+        // and ingame-00.fbrb (BFBC1 ported minimap ITexture + .dbx) instead of stock placeholders.
+        if let Err(e) = author_bfbc1_loader_ingame(lv, &lv_mod_dir, &bfbc2_dir, &startup_fbrb, &xenolith) {
+            println!("  warning: native loader/ingame authoring failed ({e}), falling back to donor copy");
+            let donor_sub = if lv.starts_with("sp_") { "sp_02" } else { "mp_001" };
+            let standalone_donor = bfbc2_dir.join("Dist").join("win32").join("levels").join(donor_sub);
+            for sub in ["loader-00.fbrb", "ingame-00.fbrb"] {
+                let dst_sub = lv_mod_dir.join(sub);
+                let src_sub = standalone_donor.join(sub);
+                if !dst_sub.is_file() && src_sub.is_file() {
+                    fs::copy(&src_sub, &dst_sub).map_err(|e| e.to_string())?;
+                }
             }
         }
 
@@ -1014,5 +1156,205 @@ pub fn cmd_port_bfbc1(default_root: &Path, args: &[String]) -> Result<(), String
     }
 
     println!("\n[Stage 3/3] BFBC1 ({mode}) installed cleanly into {}", mod_dir.display());
+    Ok(())
+}
+
+fn extract_primary_guid_via_xenolith(xenolith: &Path, dbx_bytes: &[u8]) -> Option<String> {
+    let pid = std::process::id();
+    let p_in = std::env::temp_dir().join(format!("opfor_pg_in_{pid}.dbx"));
+    let p_xml = std::env::temp_dir().join(format!("opfor_pg_out_{pid}.xml"));
+    fs::write(&p_in, dbx_bytes).ok()?;
+    let ok = run_xenolith(
+        xenolith,
+        &["dbx-to-xml".into(), p_in.display().to_string(), p_xml.display().to_string()],
+    )
+    .is_ok();
+    let _ = fs::remove_file(&p_in);
+    if !ok {
+        let _ = fs::remove_file(&p_xml);
+        return None;
+    }
+    let xml = fs::read_to_string(&p_xml).ok()?;
+    let _ = fs::remove_file(&p_xml);
+    let pos = xml.find("primaryInstance=\"")?;
+    let rest = &xml[pos + 17..];
+    if rest.len() >= 36 && rest.as_bytes()[36] == b'"' {
+        return Some(rest[..36].to_ascii_lowercase());
+    }
+    None
+}
+
+fn replace_xml_field_ref(xml: &str, field_name: &str, new_ref: &str) -> String {
+    let needle = format!("\" name=\"{field_name}\"");
+    let Some(end_idx) = xml.find(&needle) else {
+        return xml.to_owned();
+    };
+    let prefix = &xml[..end_idx];
+    let Some(start_idx) = prefix.rfind("ref=\"") else {
+        return xml.to_owned();
+    };
+    let mut out = String::with_capacity(xml.len() + new_ref.len());
+    out.push_str(&xml[..start_idx + 5]);
+    out.push_str(new_ref);
+    out.push_str(&xml[end_idx..]);
+    out
+}
+
+fn author_bfbc1_loader_ingame(
+    lv: &str,
+    lv_mod_dir: &Path,
+    bfbc2_dir: &Path,
+    startup_fbrb: &Path,
+    xenolith: &Path,
+) -> Result<(), String> {
+    let is_sp = lv.starts_with("sp_");
+    let ui_bundle = lv_mod_dir
+        .join("ui")
+        .join(if is_sp { "singleplayer-00.fbrb" } else { "multiplayer-00.fbrb" });
+    let level_bundle = lv_mod_dir.join("level-00.fbrb");
+
+    // 1. Build native PC loader-00.fbrb from BFBC1's ported loading music + PC BinkMemory movie fallback
+    let mut music_ref: Option<String> = None;
+    let mut loader_entries: Vec<FbrbEntry> = Vec::new();
+    if ui_bundle.is_file() {
+        let (_, ui_ents) = read_fbrb(&ui_bundle)?;
+        let wave_opt = ui_ents
+            .iter()
+            .find(|e| e.ext == "Wave" && e.name.to_ascii_lowercase().contains("load"))
+            .or_else(|| ui_ents.iter().find(|e| e.ext == "Wave" && e.name.to_ascii_lowercase().contains("music")));
+        if let Some(w) = wave_opt {
+            let stem = w.name[..w.name.len().saturating_sub(4)].to_ascii_lowercase();
+            let dbx_want = format!("{stem}.dbx");
+            loader_entries.push(FbrbEntry {
+                name: w.name.clone(),
+                ext: w.ext.clone(),
+                flags: 0x0001_0000,
+                data: w.data.clone(),
+            });
+            if let Some(wd) = ui_ents.iter().find(|e| e.name.eq_ignore_ascii_case(&dbx_want)) {
+                if let Some(g) = extract_primary_guid_via_xenolith(xenolith, &wd.data) {
+                    music_ref = Some(format!("{stem}/{g}"));
+                }
+                loader_entries.push(FbrbEntry {
+                    name: wd.name.clone(),
+                    ext: wd.ext.clone(),
+                    flags: 0x0001_0000,
+                    data: wd.data.clone(),
+                });
+            }
+        }
+    }
+    let donor_sub = if is_sp { "sp_02" } else { "mp_001" };
+    let donor_loader = bfbc2_dir
+        .join("Dist")
+        .join("win32")
+        .join("levels")
+        .join(donor_sub)
+        .join("loader-00.fbrb");
+    if donor_loader.is_file() {
+        let (_, d_ents) = read_fbrb(&donor_loader)?;
+        if let Some(bink) = d_ents.into_iter().find(|e| e.ext == "BinkMemory") {
+            loader_entries.push(bink);
+        }
+    }
+    if !loader_entries.is_empty() {
+        write_fbrb(&lv_mod_dir.join("loader-00.fbrb"), 2, &loader_entries, true)?;
+    }
+
+    // 2. Build native PC ingame-00.fbrb from BFBC1's ported minimap ITexture + .dbx
+    let mut minimap_ref: Option<String> = None;
+    let mut ingame_entries: Vec<FbrbEntry> = Vec::new();
+    if level_bundle.is_file() {
+        let (_, lv_ents) = read_fbrb(&level_bundle)?;
+        if let Some(mm) = lv_ents.iter().find(|e| {
+            let nl = e.name.to_ascii_lowercase();
+            e.ext == "ITexture" && nl.contains("minimap") && !nl.contains("tile")
+        }) {
+            let stem = mm.name[..mm.name.len().saturating_sub(4)].to_ascii_lowercase();
+            let dbx_want = format!("{stem}.dbx");
+            ingame_entries.push(FbrbEntry {
+                name: mm.name.clone(),
+                ext: mm.ext.clone(),
+                flags: 0x0001_0000,
+                data: mm.data.clone(),
+            });
+            let mm_dbx = lv_ents.iter().find(|e| e.name.eq_ignore_ascii_case(&dbx_want)).or_else(|| {
+                lv_ents.iter().find(|e| {
+                    let nl = e.name.to_ascii_lowercase();
+                    nl.ends_with(".dbx") && nl.contains("minimap") && !nl.contains("tile") && !nl.contains("mesh")
+                })
+            });
+            if let Some(md) = mm_dbx {
+                let mstem = md.name[..md.name.len().saturating_sub(4)].to_ascii_lowercase();
+                if let Some(g) = extract_primary_guid_via_xenolith(xenolith, &md.data) {
+                    minimap_ref = Some(format!("{mstem}/{g}"));
+                }
+                ingame_entries.push(FbrbEntry {
+                    name: md.name.clone(),
+                    ext: md.ext.clone(),
+                    flags: 0x0001_0000,
+                    data: md.data.clone(),
+                });
+            }
+        }
+    }
+    if !ingame_entries.is_empty() {
+        write_fbrb(&lv_mod_dir.join("ingame-00.fbrb"), 2, &ingame_entries, true)?;
+    }
+
+    // 3. Patch Music & MinimapTexture refs in startup-00.fbrb's levels/<lv>_description.dbx
+    if startup_fbrb.is_file() && (music_ref.is_some() || minimap_ref.is_some()) {
+        let desc_key = format!("levels/{lv}_description.dbx");
+        let (ver, mut st_ents) = read_fbrb(startup_fbrb)?;
+        let mut patched = false;
+        let pid = std::process::id();
+        for e in &mut st_ents {
+            if !e.name.eq_ignore_ascii_case(&desc_key) {
+                continue;
+            }
+            let p_in = std::env::temp_dir().join(format!("opfor_desc_in_{pid}.dbx"));
+            let p_xml = std::env::temp_dir().join(format!("opfor_desc_out_{pid}.xml"));
+            let p_out = std::env::temp_dir().join(format!("opfor_desc_new_{pid}.dbx"));
+            if fs::write(&p_in, &e.data).is_ok()
+                && run_xenolith(
+                    xenolith,
+                    &["dbx-to-xml".into(), p_in.display().to_string(), p_xml.display().to_string()],
+                )
+                .is_ok()
+                && let Ok(mut xml) = fs::read_to_string(&p_xml)
+            {
+                let orig = xml.clone();
+                if let Some(ref mr) = music_ref {
+                    xml = replace_xml_field_ref(&xml, "Music", mr);
+                }
+                if let Some(ref mmr) = minimap_ref {
+                    xml = replace_xml_field_ref(&xml, "MinimapTexture", mmr);
+                }
+                if xml != orig
+                    && fs::write(&p_xml, &xml).is_ok()
+                    && run_xenolith(
+                        xenolith,
+                        &["xml-to-dbx".into(), p_xml.display().to_string(), p_out.display().to_string()],
+                    )
+                    .is_ok()
+                    && let Ok(new_bytes) = fs::read(&p_out)
+                {
+                    e.data = new_bytes;
+                    patched = true;
+                }
+            }
+            let _ = fs::remove_file(&p_in);
+            let _ = fs::remove_file(&p_xml);
+            let _ = fs::remove_file(&p_out);
+        }
+        if patched {
+            write_fbrb(startup_fbrb, ver, &st_ents, true)?;
+        }
+    }
+    println!(
+        "  loader/ingame: authored native BFBC1 PC bundles (loader={} entries, ingame={} entries)",
+        loader_entries.len(),
+        ingame_entries.len()
+    );
     Ok(())
 }

@@ -256,6 +256,17 @@ impl SetupApp {
                         bfbc1_iso.clone(),
                     ],
                 ));
+                steps.push((
+                    "Applying BFBC1 Ingame Menus, Minimap, Icons & Dual KBM/Gamepad Parity".into(),
+                    opfor_cli.clone(),
+                    vec![
+                        "era-ui-input-parity".into(),
+                        "--era".into(),
+                        "bfbc1".into(),
+                        "--opfor".into(),
+                        opfor_dir.clone(),
+                    ],
+                ));
                 if bfbc1_mode.includes_sp() {
                     steps.push((
                         "Extracting BFBC1 Campaign Bink Movies (64B -> 72B FB1.5)".into(),
@@ -284,13 +295,24 @@ impl SetupApp {
             if port_bf1943 {
                 steps.push((
                     "Porting Battlefield 1943 (XBLA STFS)".into(),
-                    opfor_cli,
+                    opfor_cli.clone(),
                     vec![
                         "port-bf1943".into(),
                         "--xbla".into(),
                         bf1943_xbla,
                         "--bfbc2".into(),
                         bfbc2_dir,
+                        "--opfor".into(),
+                        opfor_dir.clone(),
+                    ],
+                ));
+                steps.push((
+                    "Applying BF1943 Ingame Menus, Icons & Mouse Navigation Parity".into(),
+                    opfor_cli,
+                    vec![
+                        "era-ui-input-parity".into(),
+                        "--era".into(),
+                        "bf1943".into(),
                         "--opfor".into(),
                         opfor_dir,
                     ],

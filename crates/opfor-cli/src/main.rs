@@ -6,6 +6,7 @@
 //! - `apt-info <file.res>`      : Inspects an EA APT `BIGF` movie archive
 
 mod bfbc1;
+mod era_parity;
 mod port;
 
 use std::env;
@@ -67,6 +68,7 @@ fn main() -> ExitCode {
         "bfbc1-ui-parity" => bfbc1::cmd_bfbc1_ui_parity(&root, &args[1..]),
         "bfbc1-movies" => bfbc1::cmd_bfbc1_movies(&root, &args[1..]),
         "bfbc1-navmeshes" => bfbc1::cmd_bfbc1_navmeshes(&root, &args[1..]),
+        "era-ui-input-parity" => era_parity::cmd_era_ui_input_parity(&root, &args[1..]),
         other => Err(format!("unknown command `{other}`")),
     };
 
@@ -89,7 +91,8 @@ fn print_usage() {
            opfor-cli apt-info <SwfMovie.res>\n\
            opfor-cli bfbc1-ui-parity --opfor <dir> --bfbc2 <dir> [--iso <bfbc1.iso>]\n\
            opfor-cli bfbc1-movies --iso <bfbc1.iso> [--opfor <dir>]\n\
-           opfor-cli bfbc1-navmeshes --iso <bfbc1.iso> [--opfor <dir>]"
+           opfor-cli bfbc1-navmeshes --iso <bfbc1.iso> [--opfor <dir>]\n\
+           opfor-cli era-ui-input-parity --era <bfbc1|bf1943> --opfor <dir>"
     );
 }
 

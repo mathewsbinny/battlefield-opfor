@@ -56,6 +56,7 @@ type WinHttpConnectFn = unsafe extern "system" fn(HANDLE, LPCWSTR, u16, DWORD) -
 type ShGetFolderPathAFn = unsafe extern "system" fn(HWND, i32, HANDLE, DWORD, *mut u8) -> i32;
 type ShGetFolderPathWFn = unsafe extern "system" fn(HWND, i32, HANDLE, DWORD, *mut u16) -> i32;
 type BinkOpenFn = unsafe extern "system" fn(LPCSTR, u32) -> *mut c_void;
+type XInputGetStateFn = unsafe extern "system" fn(u32, *mut crate::controller::XInputState) -> u32;
 
 static ORIG_CONNECT: OnceLock<ConnectFn> = OnceLock::new();
 static ORIG_BIND: OnceLock<BindFn> = OnceLock::new();
@@ -64,6 +65,7 @@ static ORIG_WINHTTP_CONNECT: OnceLock<WinHttpConnectFn> = OnceLock::new();
 static ORIG_SH_GET_FOLDER_A: OnceLock<ShGetFolderPathAFn> = OnceLock::new();
 static ORIG_SH_GET_FOLDER_W: OnceLock<ShGetFolderPathWFn> = OnceLock::new();
 static ORIG_BINK_OPEN: OnceLock<BinkOpenFn> = OnceLock::new();
+static ORIG_XINPUT_GET_STATE: OnceLock<XInputGetStateFn> = OnceLock::new();
 
 #[link(name = "ws2_32")]
 unsafe extern "system" {
@@ -177,6 +179,16 @@ pub fn resolve_override(
                 .set(std::mem::transmute::<*const c_void, BinkOpenFn>(real_proc));
         }
         return hook_bink_open as *const c_void;
+    } else if (dll_name.eq_ignore_ascii_case("xinput1_3.dll")
+        || dll_name.eq_ignore_ascii_case("xinput1_4.dll")
+        || dll_name.eq_ignore_ascii_case("xinput9_1_0.dll"))
+        && func_name == "XInputGetState"
+    {
+        unsafe {
+            let _ = ORIG_XINPUT_GET_STATE
+                .set(std::mem::transmute::<*const c_void, XInputGetStateFn>(real_proc));
+        }
+        return hook_xinput_get_state as *const c_void;
     } else if dll_name.eq_ignore_ascii_case("user32.dll") {
         match func_name {
             "CreateWindowExA" => return hook_create_window_a as *const c_void,
@@ -667,4 +679,27 @@ unsafe extern "system" fn hook_bink_open(name: LPCSTR, flags: u32) -> *mut c_voi
     } else {
         std::ptr::null_mut()
     }
+}
+
+// --- Native Sony DualShock 4 / DualSense HID -> XInput Bridge (`XInputGetState`) ---
+
+unsafe extern "system" fn hook_xinput_get_state(
+    user_index: u32,
+    state: *mut crate::controller::XInputState,
+) -> u32 {
+    if let Some(&orig) = ORIG_XINPUT_GET_STATE.get() {
+        let rc = unsafe { orig(user_index, state) };
+        if rc == 0 {
+            return 0;
+        }
+    }
+    // If no XInput pad is connected on slot 0, fall back to native Sony VID_054C HID translation
+    if user_index == 0 && !state.is_null() {
+        let mut translated = crate::controller::XInputState::default();
+        if crate::controller::poll_sony_xinput(&mut translated) {
+            unsafe { *state = translated };
+            return 0; // ERROR_SUCCESS
+        }
+    }
+    1167 // ERROR_DEVICE_NOT_CONNECTED
 }

@@ -22,6 +22,7 @@ use opfor_vfs::ModeId;
 pub enum InputDevice {
     KeyboardMouse,
     GamepadXbox,
+    GamepadPlayStation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -574,6 +575,17 @@ pub fn note_kbm_input() {
     }
 }
 
+pub fn note_playstation_input() {
+    if let Ok(mut g) = UI_STATE.lock() {
+        if let Some(st) = g.as_mut() {
+            if st.input_device != InputDevice::GamepadPlayStation {
+                st.input_device = InputDevice::GamepadPlayStation;
+                crate::dx_overlay::mark_dirty();
+            }
+        }
+    }
+}
+
 pub fn current_input_device() -> InputDevice {
     UI_STATE
         .lock()
@@ -634,12 +646,25 @@ fn load_xinput() -> Option<XInputGetStateFn> {
 }
 
 pub fn poll_gamepad() {
-    let Some(get_state) = load_xinput() else {
-        return;
-    };
     let mut xst = XInputState::default();
-    if unsafe { get_state(0, &mut xst) } != 0 {
-        return;
+    let got_xinput = load_xinput()
+        .map(|get_state| unsafe { get_state(0, &mut xst) } == 0)
+        .unwrap_or(false);
+    let mut from_sony_hid = false;
+    if !got_xinput {
+        let mut sony = crate::controller::XInputState::default();
+        if !crate::controller::poll_sony_xinput(&mut sony) {
+            return;
+        }
+        xst.packet_number = sony.packet_number;
+        xst.gamepad.buttons = sony.gamepad.buttons;
+        xst.gamepad.left_trigger = sony.gamepad.left_trigger;
+        xst.gamepad.right_trigger = sony.gamepad.right_trigger;
+        xst.gamepad.thumb_lx = sony.gamepad.thumb_lx;
+        xst.gamepad.thumb_ly = sony.gamepad.thumb_ly;
+        xst.gamepad.thumb_rx = sony.gamepad.thumb_rx;
+        xst.gamepad.thumb_ry = sony.gamepad.thumb_ry;
+        from_sony_hid = true;
     }
     let b = xst.gamepad.buttons;
     let stick_y: i8 = if xst.gamepad.thumb_ly > 14_000 {
@@ -674,9 +699,16 @@ pub fn poll_gamepad() {
             st.prev_stick_y = stick_y;
             st.prev_stick_x = stick_x;
 
-            if active && st.input_device != InputDevice::GamepadXbox {
-                st.input_device = InputDevice::GamepadXbox;
-                dirty = true;
+            if active {
+                let pad_dev = if from_sony_hid {
+                    InputDevice::GamepadPlayStation
+                } else {
+                    crate::controller::active_gamepad_device()
+                };
+                if st.input_device != pad_dev {
+                    st.input_device = pad_dev;
+                    dirty = true;
+                }
             }
             if st.custom_menu_active() {
                 let up = (rising & 0x0001) != 0 || stick_up;

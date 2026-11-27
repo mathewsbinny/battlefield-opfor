@@ -8,7 +8,9 @@
 
 mod airraid;
 mod bf1943;
+mod controller;
 mod dx_overlay;
+mod era_ui;
 mod hooks;
 mod imports;
 mod levelfix;
@@ -285,6 +287,7 @@ fn main() {
             .and_then(|g| g.as_ref().map(|s| s.active))
             .unwrap_or(ModeId::Bfbc2);
         ui_state::init(initial_mode);
+        controller::init(&root);
         dx_overlay::init(&root);
 
         // Only hide stock BFBC2 intro movies / title screen for WW2 (1943) and BFBC1
@@ -342,8 +345,9 @@ fn main() {
         let bf43_hooks = unsafe { bf1943::install() };
         let ar_hooks = unsafe { airraid::install() };
         let prompt_hooks = unsafe { prompts::install() };
+        let (era_ui_hooks, era_ui_expected) = unsafe { era_ui::install(initial_mode) };
         log_line(&format!(
-            "Tier 1 build-795745 hooks installed: core={patched}/10, browser={sb_hooks}/1, profile={prof_hooks}/2, persistence={persist_hooks}/2, levelfix={lvl_hooks}/{lvl_expected}, pacific={pac_hooks}/5, bf1943={bf43_hooks}/4, airraid={ar_hooks}/2, prompts={prompt_hooks}/1"
+            "Tier 1 build-795745 hooks installed: core={patched}/10, browser={sb_hooks}/1, profile={prof_hooks}/2, persistence={persist_hooks}/2, levelfix={lvl_hooks}/{lvl_expected}, pacific={pac_hooks}/5, bf1943={bf43_hooks}/4, airraid={ar_hooks}/2, prompts={prompt_hooks}/1, era_ui={era_ui_hooks}/{era_ui_expected}"
         ));
 
         // Enter Frostbite CRT startup (`0x00C52199`: WinMainCRTStartup)

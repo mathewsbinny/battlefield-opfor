@@ -157,13 +157,21 @@ impl VfsRouter {
 
         // 1b. Era-isolated in-game HUD, minimap, frames, icons, and shared UI overlays
         // (strictly active era only — never leaks BF1943 or BFBC1 HUD into BFBC2 or Vietnam!).
-        // Front-end `menu/main/mainmenu-00.fbrb` stays on stock PC unless explicitly opted-in
-        // via `bf1943_native_menu` (since `MenuCanvas` renders the era-authentic Front-End UI).
+        // Covers BOTH `Dist/win32/` and `Package/` requests so BFBC1, BF1943, and BFBC2 each load
+        // their own original APT `ingame-00.fbrb` and font bundles.
+        if let Some(sub) = rel.strip_prefix("dist/win32/") {
+            if is_era_isolated_rel(sub) {
+                if let Some(ref active_dir) = self.active_mode_dir {
+                    let cand = active_dir.join(sub.replace('/', "\\"));
+                    if exists(&cand) {
+                        return VfsResolution::Redirect(cand);
+                    }
+                }
+                return VfsResolution::PassThrough;
+            }
+        }
         if let Some(sub) = rel.strip_prefix("package/") {
-            let is_era_isolated = sub.starts_with("menu/hud/")
-                || sub.starts_with("menu/shared/")
-                || sub == "streaming_sounds-00.fbrb";
-            if is_era_isolated {
+            if is_era_isolated_rel(sub) {
                 if let Some(ref active_dir) = self.active_mode_dir {
                     let cand = active_dir.join(sub.replace('/', "\\"));
                     if exists(&cand) {
@@ -229,6 +237,18 @@ impl VfsRouter {
             stripped
         }
     }
+}
+
+/// Returns `true` for shared HUD/UI/font/ingame bundle paths that must be strictly isolated to the
+/// currently active game era (`BFBC2`, `Vietnam`, `BF1943`, or `BFBC1`).
+fn is_era_isolated_rel(sub: &str) -> bool {
+    sub.starts_with("menu/hud/")
+        || sub.starts_with("menu/shared/")
+        || sub == "streaming_sounds-00.fbrb"
+        || sub == "levels/sp_common/ingame-00.fbrb"
+        || sub == "levels/mp_common/ingame-00.fbrb"
+        || sub == "levels/sp_common/loader-00.fbrb"
+        || sub == "levels/mp_common/loader-00.fbrb"
 }
 
 /// Normalize a Windows path for case-insensitive matching (`/` separators, lowercase, no `\\?\`).
@@ -315,6 +335,48 @@ mod tests {
         // 4. Stock BFBC2 level passes through untouched
         assert_eq!(
             router.resolve_with(r"Package\levels\mp_001\level-00.fbrb", |p| existing.contains(p)),
+            VfsResolution::PassThrough
+        );
+    }
+
+    #[test]
+    fn isolates_era_ingame_apt_menus() {
+        let root = Path::new(r"C:\Programming\Projects\battlefield-opfor");
+        let mods = vec![
+            dummy_module("bf1943", r"C:\Programming\Projects\battlefield-opfor\modules\bf1943"),
+            dummy_module("bfbc1", r"C:\Programming\Projects\battlefield-opfor\modules\bfbc1"),
+        ];
+        let existing: HashSet<PathBuf> = [
+            PathBuf::from(r"C:\Programming\Projects\battlefield-opfor\modules\bfbc1\levels\sp_common\ingame-00.fbrb"),
+            PathBuf::from(r"C:\Programming\Projects\battlefield-opfor\modules\bfbc1\levels\mp_common\ingame-00.fbrb"),
+            PathBuf::from(r"C:\Programming\Projects\battlefield-opfor\modules\bf1943\levels\mp_common\ingame-00.fbrb"),
+        ]
+        .into_iter()
+        .collect();
+
+        let r_bc1 = VfsRouter::for_era(root, &mods, ModeId::Bfbc1, true);
+        let r_43 = VfsRouter::for_era(root, &mods, ModeId::Bf1943, true);
+        let r_bc2 = VfsRouter::for_era(root, &mods, ModeId::Bfbc2, false);
+
+        assert_eq!(
+            r_bc1.resolve_with(r"Dist\win32\levels\sp_common\ingame-00.fbrb", |p| existing.contains(p)),
+            VfsResolution::Redirect(PathBuf::from(
+                r"C:\Programming\Projects\battlefield-opfor\modules\bfbc1\levels\sp_common\ingame-00.fbrb"
+            ))
+        );
+        assert_eq!(
+            r_43.resolve_with(r"Dist\win32\levels\mp_common\ingame-00.fbrb", |p| existing.contains(p)),
+            VfsResolution::Redirect(PathBuf::from(
+                r"C:\Programming\Projects\battlefield-opfor\modules\bf1943\levels\mp_common\ingame-00.fbrb"
+            ))
+        );
+        // BFBC2 must NEVER see BFBC1 or BF1943 ingame menus!
+        assert_eq!(
+            r_bc2.resolve_with(r"Dist\win32\levels\sp_common\ingame-00.fbrb", |p| existing.contains(p)),
+            VfsResolution::PassThrough
+        );
+        assert_eq!(
+            r_bc2.resolve_with(r"Package\levels\mp_common\ingame-00.fbrb", |p| existing.contains(p)),
             VfsResolution::PassThrough
         );
     }

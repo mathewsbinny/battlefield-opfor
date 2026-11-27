@@ -157,6 +157,7 @@ pub(crate) fn copy_iso_range(fp: &mut File, offset: u64, size: u64, out: &mut Fi
 // Frostbite FbRB v2 archive reader & writer
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 pub(crate) struct FbrbEntry {
     pub(crate) name: String,
     pub(crate) ext: String,
@@ -400,20 +401,60 @@ pub fn cmd_bfbc1_ui_parity(default_root: &Path, args: &[String]) -> Result<(), S
         .join("fonts_us-00.fbrb");
     let cache_overlay = opfor.join("cache").join("overlay-00.fbrb");
 
-    // Extract build_overlay-00.fbrb from ISO if not already unpacked
-    if !bfbc1_overlay_x360.is_file()
-        && let Some(ref iso_path) = iso
+    // Extract build_overlay-00.fbrb & HUD bundles from ISO if not already unpacked
+    if let Some(ref iso_path) = iso
         && iso_path.is_file()
     {
         let idx = index_iso(iso_path)?;
-        if let Some(&(off, sz)) = idx.files.get("dist/xenon/build_overlay-00.fbrb") {
+        let mut fp = File::open(iso_path).map_err(|e| e.to_string())?;
+        if !bfbc1_overlay_x360.is_file()
+            && let Some(&(off, sz)) = idx.files.get("dist/xenon/build_overlay-00.fbrb")
+        {
             if let Some(parent) = bfbc1_overlay_x360.parent() {
                 fs::create_dir_all(parent).map_err(|e| e.to_string())?;
             }
-            let mut fp = File::open(iso_path).map_err(|e| e.to_string())?;
             let mut out = File::create(&bfbc1_overlay_x360).map_err(|e| e.to_string())?;
             copy_iso_range(&mut fp, off, sz, &mut out)?;
             println!("[fonts] Extracted dist/xenon/build_overlay-00.fbrb from ISO ({sz} B)");
+        }
+        // Also extract & port BFBC1 SP + MP HUD bundles (`hud_singleplayer-00.fbrb`, `hud_multiplayer-00.fbrb`)
+        for (iso_rel, mod_rel) in [
+            ("dist/xenon/menu/hud/hud_singleplayer-00.fbrb", "menu/hud/hud_singleplayer-00.fbrb"),
+            ("dist/xenon/menu/hud/hud_multiplayer-00.fbrb", "menu/hud/hud_multiplayer-00.fbrb"),
+        ] {
+            let dst_mod = opfor.join("modules").join("bfbc1").join(mod_rel.replace('/', "\\"));
+            if !dst_mod.is_file()
+                && let Some(&(off, sz)) = idx.files.get(iso_rel)
+            {
+                let tmp_raw = std::env::temp_dir().join(format!(
+                    "opfor_bc1_hud_raw_{}_{}.fbrb",
+                    std::process::id(),
+                    dst_mod.file_name().unwrap_or_default().to_string_lossy()
+                ));
+                let mut out_f = File::create(&tmp_raw).map_err(|e| e.to_string())?;
+                copy_iso_range(&mut fp, off, sz, &mut out_f)?;
+                drop(out_f);
+                if let Some(parent) = dst_mod.parent() {
+                    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+                let res = Command::new(&xenolith)
+                    .args([
+                        "port-fbrb",
+                        "--bfbc1",
+                        &tmp_raw.display().to_string(),
+                        &dst_mod.display().to_string(),
+                    ])
+                    .output()
+                    .map_err(|e| format!("run xenolith port-fbrb on {iso_rel}: {e}"))?;
+                let _ = fs::remove_file(&tmp_raw);
+                if !res.status.success() {
+                    return Err(format!(
+                        "xenolith port-fbrb failed on {iso_rel}: {}",
+                        String::from_utf8_lossy(&res.stderr)
+                    ));
+                }
+                println!("[hud] Extracted & ported {iso_rel} -> {}", dst_mod.display());
+            }
         }
     }
 
