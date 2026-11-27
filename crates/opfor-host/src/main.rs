@@ -287,6 +287,7 @@ fn main() {
             .and_then(|g| g.as_ref().map(|s| s.active))
             .unwrap_or(ModeId::Bfbc2);
         ui_state::init(initial_mode);
+        ui_state::init_custom_menu_pref(&root);
         controller::init(&root);
         dx_overlay::init(&root);
 

@@ -479,6 +479,14 @@ unsafe extern "fastcall" fn detour_main_menu_disp(
     if unsafe { crate::server_browser::handle_menu_command(&cname, &cargs) } {
         return;
     }
+    let active_mode = STATE
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|s| s.active))
+        .unwrap_or(ModeId::Bfbc2);
+    if crate::era_ui::should_shim_mainmenu_fscommand(active_mode, &cname) {
+        return;
+    }
     if let Some(&orig) = ORIG_MAIN_MENU_DISP.get() {
         unsafe { orig(menu_self, edx, name, args) };
     }

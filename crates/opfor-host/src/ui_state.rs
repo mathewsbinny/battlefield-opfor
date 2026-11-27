@@ -323,7 +323,8 @@ impl InGameUiState {
     }
 
     pub fn custom_menu_active(&self) -> bool {
-        self.scene == GameScene::InMenu
+        CUSTOM_MENU_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+            && self.scene == GameScene::InMenu
             && matches!(self.active_era, ModeId::Bf1943 | ModeId::Bfbc1)
     }
 
@@ -536,6 +537,8 @@ impl InGameUiState {
 }
 
 pub static UI_STATE: Mutex<Option<InGameUiState>> = Mutex::new(None);
+static CUSTOM_MENU_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 pub fn init(initial_era: ModeId) {
     let mut st = InGameUiState::new();
@@ -543,6 +546,34 @@ pub fn init(initial_era: ModeId) {
     if let Ok(mut g) = UI_STATE.lock() {
         *g = Some(st);
     }
+}
+
+/// Optional `custom_menu=1` override in `config/opfor.ini` (defaults to `false` so BFBC1 & BF1943
+/// render their native APT `mainmenu-00.fbrb` directly instead of the GDI+ overlay).
+pub fn init_custom_menu_pref(opfor_root: &std::path::Path) {
+    let enabled = std::fs::read_to_string(opfor_root.join("config").join("opfor.ini"))
+        .ok()
+        .map(|txt| {
+            txt.lines().any(|raw| {
+                raw.trim()
+                    .strip_prefix("custom_menu=")
+                    .is_some_and(|v| matches!(v.trim(), "1" | "true" | "yes"))
+            })
+        })
+        .unwrap_or(false);
+    CUSTOM_MENU_ENABLED.store(enabled, std::sync::atomic::Ordering::Release);
+    crate::log_line(&format!(
+        "ui_state: custom GDI+ MenuCanvas overlay enabled={enabled} (native APT mainmenu active={})",
+        !enabled
+    ));
+}
+
+pub fn current_scene() -> GameScene {
+    UI_STATE
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|s| s.scene))
+        .unwrap_or(GameScene::Booting)
 }
 
 pub fn set_scene(scene: GameScene) {

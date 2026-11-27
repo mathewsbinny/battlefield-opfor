@@ -249,6 +249,7 @@ fn is_era_isolated_rel(sub: &str) -> bool {
         || sub == "levels/mp_common/ingame-00.fbrb"
         || sub == "levels/sp_common/loader-00.fbrb"
         || sub == "levels/mp_common/loader-00.fbrb"
+        || sub == "menu/main/mainmenu-00.fbrb"
 }
 
 /// Normalize a Windows path for case-insensitive matching (`/` separators, lowercase, no `\\?\`).

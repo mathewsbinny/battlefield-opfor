@@ -18,6 +18,13 @@ use crate::ui_state::{Bf1943Modal, Bf1943Screen, PACIFIC_MAPS, UI_STATE};
 use crate::win32::{self, HWND, LPARAM, WPARAM};
 
 const GWL_WNDPROC: i32 = -4;
+#[link(name = "user32")]
+unsafe extern "system" {
+    fn LoadCursorW(hInstance: *mut c_void, lpCursorName: *const u16) -> *mut c_void;
+    fn SetCursor(hCursor: *mut c_void) -> *mut c_void;
+}
+
+const WM_SETCURSOR: u32 = 0x0020;
 const WM_MOUSEMOVE: u32 = 0x0200;
 const WM_LBUTTONDOWN: u32 = 0x0201;
 const WM_LBUTTONDBLCLK: u32 = 0x0203;
@@ -760,6 +767,21 @@ unsafe extern "system" fn hook_wndproc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> isize {
+    if msg == WM_SETCURSOR {
+        let in_menu = crate::ui_state::current_scene() == crate::ui_state::GameScene::InMenu
+            || crate::era_ui::is_ingame_menu_open();
+        if in_menu {
+            if crate::ui_state::current_input_device() == crate::ui_state::InputDevice::KeyboardMouse {
+                unsafe {
+                    let arrow = LoadCursorW(std::ptr::null_mut(), 32512usize as *const u16); // IDC_ARROW
+                    SetCursor(arrow);
+                }
+            } else {
+                unsafe { SetCursor(std::ptr::null_mut()) };
+            }
+            return 1;
+        }
+    }
     if msg == WM_INPUT {
         crate::controller::handle_wm_input(lparam);
     } else if matches!(msg, WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MOUSEWHEEL | WM_KEYDOWN) {

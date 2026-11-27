@@ -24,10 +24,63 @@ use std::collections::HashSet;
 #[cfg(target_arch = "x86")]
 use std::ffi::c_void;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(target_arch = "x86")]
 use std::sync::OnceLock;
 
 use opfor_vfs::ModeId;
+
+static INGAME_MENU_OPEN: AtomicBool = AtomicBool::new(false);
+
+/// True while an ingame pause/spawn menu is open (used by `dx_overlay` `WM_SETCURSOR`).
+#[must_use]
+pub fn is_ingame_menu_open() -> bool {
+    INGAME_MENU_OPEN.load(Ordering::Relaxed)
+}
+
+/// True if a BFBC1/BF1943 main-menu `FSCommand` was removed from `frostbite.bin` and should be
+/// cleanly shimmed in `MainMenuDispatcher` (`0x0077BC10`).
+#[must_use]
+pub fn should_shim_mainmenu_fscommand(mode: ModeId, name: &str) -> bool {
+    match mode {
+        ModeId::Bfbc1 => matches!(
+            name,
+            "setArray"
+                | "setArrayCount"
+                | "setArrayIndex"
+                | "setArraySelection"
+                | "refreshArray"
+                | "popupRequest"
+                | "requestFLEntry"
+                | "setFLListPageNr"
+                | "setLBListPageNr"
+                | "setGunrackWeapon"
+                | "zoomGunrackCamera"
+                | "awardGridCursor"
+                | "setActiveAward"
+                | "setDogTagListPage"
+                | "setServerFilter"
+                | "weaponUnlock"
+                | "mapCompletionName"
+        ),
+        ModeId::Bf1943 => matches!(
+            name,
+            "setArray"
+                | "setArrayCount"
+                | "setArrayIndex"
+                | "refreshArray"
+                | "popupRequest"
+                | "requestFLEntry"
+                | "setFLListPageNr"
+                | "setLBListPageNr"
+                | "startMusic"
+                | "startTutorial"
+                | "bf1943NavInit"
+                | "bf1943NavStart"
+        ),
+        _ => false,
+    }
+}
 
 /// Verified `frostbite.bin` (BFBC2 build 795745) ingame HUD/menu `FSCommand` dispatcher.
 /// Vtable `0x0142B228`, slot `+0x18` (`thiscall(this, const char* name, const char* args)`, `ret 8`).
@@ -154,6 +207,14 @@ unsafe extern "fastcall" fn detour_ingame_fscommand(
         .ok()
         .and_then(|g| g.as_ref().map(|s| s.mode))
         .unwrap_or(ModeId::Bfbc2);
+
+    // Track ingame pause/spawn menu state for WM_SETCURSOR cursor visibility
+    match name.as_str() {
+        "pauseGame" | "enterMenu" => INGAME_MENU_OPEN.store(true, Ordering::Release),
+        "unpauseGame" | "enableGameInput" | "doContinueMission" | "selectSpawnPoint"
+        | "doSpawn" => INGAME_MENU_OPEN.store(false, Ordering::Release),
+        _ => {}
+    }
 
     match classify_fscommand(mode, &name) {
         ShimAction::PassThrough => {
