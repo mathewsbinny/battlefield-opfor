@@ -257,6 +257,19 @@ impl SetupApp {
                     ],
                 ));
                 steps.push((
+                    "Porting BFBC1 Native Main Menu & 3D Gunrack (PC Shaders)".into(),
+                    opfor_cli.clone(),
+                    vec![
+                        "bfbc1-mainmenu".into(),
+                        "--iso".into(),
+                        bfbc1_iso.clone(),
+                        "--bfbc2".into(),
+                        bfbc2_dir.clone(),
+                        "--opfor".into(),
+                        opfor_dir.clone(),
+                    ],
+                ));
+                steps.push((
                     "Applying BFBC1 Ingame Menus, Minimap, Icons & Dual KBM/Gamepad Parity".into(),
                     opfor_cli.clone(),
                     vec![

@@ -104,6 +104,20 @@ fn classify_era(section: &str, level_path: &str) -> ModeId {
         || l.contains("CORAL_SEA")
     {
         ModeId::Bf1943
+    } else if s.starts_with("BFBC1_")
+        || l.contains("MP_BEACHHEAD_")
+        || l.contains("MP_HARBOUR_")
+        || l.contains("MP_IGNITION_")
+        || l.contains("MP_MONASTERY_")
+        || l.contains("SP_01_GREENACRES")
+        || l.contains("SP_02_TRAITOR")
+        || l.contains("SP_03_CROSSROADS")
+        || l.contains("SP_05_PAR_FOR_THE_COURSE")
+        || l.contains("SP_06_HOT_ZONE")
+        || l.contains("SP_07_POW")
+        || l.contains("SP_08_GHOST_TOWN")
+    {
+        ModeId::Bfbc1
     } else {
         ModeId::Bfbc2
     }
@@ -113,6 +127,8 @@ fn mode_key_and_players(mode_name: &str) -> (&'static str, i32) {
     match mode_name.to_ascii_lowercase().as_str() {
         "conquest" => ("CONQUEST", 32),
         "rush" => ("RUSH", 32),
+        "gold rush" => ("RUSH", 24),
+        "campaign" => ("SP", 1),
         "squad rush" => ("SQRUSH", 8),
         "squad deathmatch" => ("SQDM", 16),
         "onslaught" => ("RUSH", 4),
@@ -393,6 +409,35 @@ unsafe fn join_offline_match(ui: *mut c_void, args: &str) -> bool {
     false
 }
 
+/// Pick a BFBC1 offline level to launch for Quick Match / Host / Campaign commands.
+#[cfg(target_arch = "x86")]
+fn resolve_bfbc1_level(args: &str, want_sp: bool) -> String {
+    let trimmed = args.split(',').next().unwrap_or("").trim();
+    if let Some(matches) = MATCHES.get() {
+        if !trimmed.is_empty() {
+            let needle = trimmed.to_ascii_lowercase();
+            if let Some(m) = matches.iter().find(|m| {
+                m.era == ModeId::Bfbc1
+                    && (m.level_path.to_ascii_lowercase().contains(&needle)
+                        || m.map_name.to_ascii_lowercase().contains(&needle))
+            }) {
+                return m.level_path.clone();
+            }
+        }
+        if let Some(m) = matches.iter().find(|m| {
+            let is_sp = m.level_path.to_ascii_lowercase().contains("/sp_");
+            m.era == ModeId::Bfbc1 && is_sp == want_sp
+        }) {
+            return m.level_path.clone();
+        }
+    }
+    if want_sp {
+        "Levels/SP_01_GreenAcres".to_string()
+    } else {
+        "Levels/MP_Beachhead_Day1".to_string()
+    }
+}
+
 /// Intercept main-menu FSCommands for the Offline Server Browser.
 /// Returns `true` if handled (skip original dispatcher).
 #[cfg(target_arch = "x86")]
@@ -401,6 +446,34 @@ pub unsafe fn handle_menu_command(name: &str, args: &str) -> bool {
     if ui.is_null() {
         return false;
     }
+    let active_mode = crate::hooks::STATE
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|s| s.active))
+        .unwrap_or(ModeId::Bfbc2);
+
+    if active_mode == ModeId::Bfbc1 {
+        match name {
+            "startFindServer" => {
+                unsafe { fill_server_list(ui) };
+                return true;
+            }
+            "startQuickMatch" | "hostMultiplayer" | "joinMultiplayer" | "joinSession" => {
+                let lvl = resolve_bfbc1_level(args, false);
+                crate::log_line(&format!("server browser(BFBC1): '{name}' -> host local '{lvl}'"));
+                unsafe { queue_host_local(ui, &lvl) };
+                return true;
+            }
+            "newSP" | "continueSP" => {
+                let lvl = resolve_bfbc1_level(args, true);
+                crate::log_line(&format!("server browser(BFBC1): '{name}' -> start SP '{lvl}'"));
+                unsafe { queue_host_local(ui, &lvl) };
+                return true;
+            }
+            _ => {}
+        }
+    }
+
     match name {
         "serverFilterSettings" => {
             if let Ok(mut t) = TIMERS.lock() {
@@ -471,6 +544,12 @@ unsafe extern "cdecl" fn row_mode_text(rec: *const u8, original: *const u8) -> *
             if m.mode_name.eq_ignore_ascii_case("Air Superiority") {
                 return b"AIR SUPERIORITY\0".as_ptr();
             }
+            if m.mode_name.eq_ignore_ascii_case("Gold Rush") {
+                return b"GOLD RUSH\0".as_ptr();
+            }
+            if m.mode_name.eq_ignore_ascii_case("Campaign") {
+                return b"CAMPAIGN\0".as_ptr();
+            }
         }
     }
     original
@@ -532,4 +611,19 @@ pub unsafe fn install_hooks() -> usize {
 #[cfg(not(target_arch = "x86"))]
 pub unsafe fn install_hooks() -> usize {
     0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_all_four_eras() {
+        assert_eq!(classify_era("MP_001", "Levels/MP_001"), ModeId::Bfbc2);
+        assert_eq!(classify_era("BC1_OASIS", "Levels/BC1_Oasis_CQ"), ModeId::Bfbc2);
+        assert_eq!(classify_era("NAM_MP_002", "Levels/NAM_MP_002CQ"), ModeId::Vietnam);
+        assert_eq!(classify_era("WAKE_ISLAND_S", "Levels/WAKE_ISLAND_S"), ModeId::Bf1943);
+        assert_eq!(classify_era("BFBC1_OASIS", "Levels/MP_Beachhead_Day1"), ModeId::Bfbc1);
+        assert_eq!(classify_era("BFBC1_SP_01", "Levels/SP_01_GreenAcres"), ModeId::Bfbc1);
+    }
 }

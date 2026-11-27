@@ -29,6 +29,7 @@ const STRING_ASSIGN: usize = 0x0042_5080;
 const STRING_DTOR: usize = 0x0040_1470;
 
 const UI_MANAGER_GLOBAL: usize = 0x019A_4CA8;
+const SEND_MENU_EVENT: usize = 0x0092_9A70;
 const ACQUIRE_MENU_EVENT: usize = 0x0092_0360;
 const EVENT_ADD_STRING: usize = 0x0058_8910;
 const EVENT_ADD_VALUE: usize = 0x0058_8940;
@@ -247,11 +248,52 @@ unsafe extern "fastcall" fn detour_client_send_join(client: *mut c_void, edx: *m
 }
 
 #[cfg(target_arch = "x86")]
+unsafe fn send_simple_menu_event(ui: *mut c_void, event_cstr: &'static [u8]) {
+    type SendEvtFn = unsafe extern "fastcall" fn(*mut c_void, *mut c_void, *const u8);
+    let send_evt: SendEvtFn = unsafe { std::mem::transmute(SEND_MENU_EVENT) };
+    unsafe { send_evt(ui, std::ptr::null_mut(), event_cstr.as_ptr()) };
+}
+
+#[cfg(target_arch = "x86")]
 pub unsafe fn handle_menu_command(name: &str, args: &str) -> bool {
     let ui = unsafe { *(UI_MANAGER_GLOBAL as *const *mut c_void) };
     if ui.is_null() {
         return false;
     }
+    let active_mode = crate::hooks::STATE
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|s| s.active))
+        .unwrap_or(opfor_vfs::ModeId::Bfbc2);
+
+    // BFBC1's main_root.res / main_nav.res use Xbox 360 presence + memory-card handshakes.
+    // Answer them immediately offline so the menu unlocks Multiplayer & Campaign without stalling.
+    if active_mode == opfor_vfs::ModeId::Bfbc1 {
+        match name {
+            "presenceRequestOnline"
+            | "readyToLogin"
+            | "presenceCreateAccount"
+            | "presenceRestartLogin" => {
+                unsafe { send_simple_menu_event(ui, b"presenceConnected\0") };
+                crate::log_line(&format!(
+                    "profile(BFBC1): '{name}' -> sent offline 'presenceConnected'"
+                ));
+                return true;
+            }
+            "memCardResponse" => {
+                unsafe { send_simple_menu_event(ui, b"memcardPopupHide\0") };
+                crate::log_line("profile(BFBC1): 'memCardResponse' -> sent 'memcardPopupHide'");
+                return true;
+            }
+            "querySavedGames" => {
+                unsafe { send_simple_menu_event(ui, b"querySavedGamesEnd\0") };
+                crate::log_line("profile(BFBC1): 'querySavedGames' -> sent 'querySavedGamesEnd'");
+                return true;
+            }
+            _ => {}
+        }
+    }
+
     match name {
         "presenceRequestOnline" => {
             type AcquireFn = unsafe extern "fastcall" fn(*mut c_void, *mut c_void) -> *mut c_void;

@@ -591,6 +591,47 @@ fn build_era_ingame(
     Ok(())
 }
 
+/// Enforce authentic BFBC1 health behavior (`RegenerateHealth = 0.0f`) on `SoldierEntityData`
+/// instances so Frostbite 1.5's BFBC2 auto-regeneration default does not override Auto-Injector.
+fn disable_soldier_regen_xml(xml: &str) -> (String, usize) {
+    if !xml.contains("GameSharedResources.SoldierEntityData") {
+        return (xml.to_string(), 0);
+    }
+    let mut out = String::with_capacity(xml.len() + 64);
+    let mut in_soldier = false;
+    let mut saw_regen = false;
+    let mut changes = 0usize;
+    for line in xml.split_inclusive('\n') {
+        if line.contains("<instance ") {
+            in_soldier = line.contains("GameSharedResources.SoldierEntityData");
+            saw_regen = false;
+        } else if line.contains("</instance>") {
+            in_soldier = false;
+        }
+        if in_soldier && line.contains("name=\"RegenerateHealth\"") {
+            saw_regen = true;
+            if !line.contains(">0</field>") {
+                let indent: String = line.chars().take_while(|c| *c == '\t' || *c == ' ').collect();
+                out.push_str(&format!("{indent}<field name=\"RegenerateHealth\">0</field>\n"));
+                changes += 1;
+                continue;
+            }
+        }
+        out.push_str(line);
+        if in_soldier
+            && !saw_regen
+            && line.contains("<field name=\"MaxHealth\">")
+            && !xml.contains("name=\"RegenerateHealth\"")
+        {
+            let indent: String = line.chars().take_while(|c| *c == '\t' || *c == ' ').collect();
+            out.push_str(&format!("{indent}<field name=\"RegenerateHealth\">0</field>\n"));
+            saw_regen = true;
+            changes += 1;
+        }
+    }
+    (out, changes)
+}
+
 fn patch_bfbc1_levels(xenolith: &Path, opfor: &Path) -> Result<(), String> {
     let lv_root = opfor.join("modules").join("bfbc1").join("levels");
     let Ok(rd) = fs::read_dir(&lv_root) else {
@@ -636,6 +677,7 @@ fn patch_bfbc1_levels(xenolith: &Path, opfor: &Path) -> Result<(), String> {
         let lv_key = format!("levels/{}.dbx", lv.to_ascii_lowercase());
         let desc_key = format!("levels/{}_description.dbx", lv.to_ascii_lowercase());
         let mut up_total = 0usize;
+        let mut regen_total = 0usize;
         for e in &mut l0_entries {
             let nl = e.name.to_ascii_lowercase();
             if !nl.ends_with(".dbx") {
@@ -643,7 +685,9 @@ fn patch_bfbc1_levels(xenolith: &Path, opfor: &Path) -> Result<(), String> {
             }
             let has_input = e.data.windows(15).any(|w| w == b"InputActionMaps")
                 || e.data.windows(26).any(|w| w == b"EiaCycleSecondaryInventory");
-            if nl == desc_key || nl == lv_key || has_input {
+            let is_soldier = nl.starts_with("objects/soldiers/")
+                && e.data.windows(17).any(|w| w == b"SoldierEntityData");
+            if nl == desc_key || nl == lv_key || has_input || is_soldier {
                 let mut xml = dbx_to_xml(xenolith, &e.data)?;
                 let mut e_mod = false;
                 if nl == desc_key && !xml.to_ascii_lowercase().contains(&ref_s) {
@@ -669,6 +713,14 @@ fn patch_bfbc1_levels(xenolith: &Path, opfor: &Path) -> Result<(), String> {
                         e_mod = true;
                     }
                 }
+                if is_soldier {
+                    let (rxml, rc) = disable_soldier_regen_xml(&xml);
+                    if rc > 0 {
+                        xml = rxml;
+                        regen_total += rc;
+                        e_mod = true;
+                    }
+                }
                 if e_mod {
                     e.data = xml_to_dbx(xenolith, &xml)?;
                     changed = true;
@@ -677,7 +729,9 @@ fn patch_bfbc1_levels(xenolith: &Path, opfor: &Path) -> Result<(), String> {
         }
         if changed {
             write_fbrb(&l0, l0_ver, &l0_entries, true)?;
-            println!("[era-parity] Patched {lv} (minimap + {up_total} dual KBM/Gamepad inputs)");
+            println!(
+                "[era-parity] Patched {lv} (minimap + {up_total} dual KBM/Gamepad inputs + {regen_total} no-regen soldiers)"
+            );
         } else {
             println!("[era-parity] {lv} already up to date");
         }
@@ -797,5 +851,16 @@ mod tests {
         assert!(r.contains("UIHudIcon_HealthbarRed"));
         assert!(r.contains("UIHudIcon_UAVEnemy"));
         assert!(!r.contains(">UIHudIcon_Healthbar<"));
+    }
+
+    #[test]
+    fn disables_bfbc1_soldier_auto_regen() {
+        let xml = "<partition>\n\t<instance guid=\"AAA\" type=\"GameSharedResources.SoldierEntityData\" id=\"Specialist\">\n\t\t<field name=\"MaxHealth\">1120403456</field>\n\t</instance>\n</partition>\n";
+        let (out, c1) = disable_soldier_regen_xml(xml);
+        assert_eq!(c1, 1);
+        assert!(out.contains("<field name=\"RegenerateHealth\">0</field>"));
+        // Idempotent on second run
+        let (_, c2) = disable_soldier_regen_xml(&out);
+        assert_eq!(c2, 0);
     }
 }

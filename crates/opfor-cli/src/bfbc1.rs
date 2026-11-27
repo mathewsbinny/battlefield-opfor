@@ -50,6 +50,16 @@ const BFBC1_SP_LEVELS: &[&str] = &[
     "sp_08_ghost_town",
 ];
 
+const BFBC1_SP_MOVIE_MAP: &[(&str, &str)] = &[
+    ("sp_01_greenacres", "greenacres.res"),
+    ("sp_02_traitor_of_zabograd", "zabograd.res"),
+    ("sp_03_crossroads", "crossroads.res"),
+    ("sp_05_par_for_the_course", "parcourse.res"),
+    ("sp_06_hot_zone", "hotzone.res"),
+    ("sp_07_pow", "pow.res"),
+    ("sp_08_ghost_town", "ghosttown.res"),
+];
+
 // ---------------------------------------------------------------------------
 // Read-only Xbox 360 XDVDFS ISO reader
 // ---------------------------------------------------------------------------
@@ -655,6 +665,245 @@ pub fn cmd_bfbc1_movies(default_root: &Path, args: &[String]) -> Result<(), Stri
         "[movies] Done: {extracted}/{} movies ready in {}",
         BFBC1_CAMPAIGN_MOVIES.len(),
         out_dir.display()
+    );
+    wire_bfbc1_sp_loader_movies(&opfor)?;
+    Ok(())
+}
+
+/// Replace the BFBC2 donor `BinkMemory` movie inside each BFBC1 SP level's `loader-00.fbrb`
+/// with the raw `BIKi` stream from that mission's native BFBC1 movie (`modules/bfbc1/movies/*.res`).
+pub fn wire_bfbc1_sp_loader_movies(opfor: &Path) -> Result<(), String> {
+    let movies_dir = opfor.join("modules").join("bfbc1").join("movies");
+    let mut updated = 0usize;
+    for &(lv, movie_file) in BFBC1_SP_MOVIE_MAP {
+        let movie_path = movies_dir.join(movie_file);
+        let loader_path = opfor
+            .join("modules")
+            .join("bfbc1")
+            .join("levels")
+            .join(lv)
+            .join("loader-00.fbrb");
+        if !(movie_path.is_file() && loader_path.is_file()) {
+            continue;
+        }
+        let movie_bytes = fs::read(&movie_path).map_err(|e| format!("read {}: {e}", movie_path.display()))?;
+        if movie_bytes.len() <= 76 || &movie_bytes[..15] != b"RES\x02BinkTexture" {
+            continue;
+        }
+        let raw_bink = &movie_bytes[72..];
+        if &raw_bink[..4] != b"BIKi" && &raw_bink[..4] != b"KB2i" {
+            continue;
+        }
+        let (ver, mut entries) = read_fbrb(&loader_path)?;
+        let mut changed = false;
+        for e in &mut entries {
+            if e.ext == "BinkMemory" {
+                if e.data.len() != raw_bink.len() || e.data.get(..16) != raw_bink.get(..16) {
+                    e.data = raw_bink.to_vec();
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            write_fbrb(&loader_path, ver, &entries, true)?;
+            updated += 1;
+            println!(
+                "[loader] {lv}: embedded native BFBC1 movie {movie_file} ({} KB) into loader-00.fbrb",
+                raw_bink.len() / 1024
+            );
+        }
+    }
+    println!("[loader] Native BFBC1 SP loading movies updated: {updated}/{}", BFBC1_SP_MOVIE_MAP.len());
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Command 4: `bfbc1-mainmenu` (Native BFBC1 mainmenu-00.fbrb + PC 3D Gunrack)
+// ---------------------------------------------------------------------------
+
+fn rewrite_gunrack_shaders_xml(xml: &str) -> Option<String> {
+    let part_guid = xml.split("partition guid=\"").nth(1)?.split('"').next()?;
+    let primary = xml.split("primaryInstance=\"").nth(1)?.split('"').next()?;
+    let inst_guid = xml.split("<instance guid=\"").nth(1)?.split('"').next()?;
+    let name_val = xml
+        .split("<field name=\"Name\">")
+        .nth(1)?
+        .split("</field>")
+        .next()?;
+    Some(format!(
+        "<?xml version=\"1.0\"?>\n\
+         <partition guid=\"{part_guid}\" primaryInstance=\"{primary}\" exportMode=\"All\">\n\
+         \t<instance guid=\"{inst_guid}\" type=\"Render.ShaderDatabaseCollection\" id=\"Shaders\">\n\
+         \t\t<field name=\"Name\">{name_val}</field>\n\
+         \t\t<field name=\"MemoryReportGroup\">MemoryReportGroup_default</field>\n\
+         \t\t<array name=\"Groups\">\n\
+         \t\t\t<complex>\n\
+         \t\t\t\t<field name=\"Name\">Scenes/UI/Gunrack/Shaders/Dx9_Single</field>\n\
+         \t\t\t\t<field name=\"Path\">ShaderRenderPath_Dx9</field>\n\
+         \t\t\t</complex>\n\
+         \t\t\t<complex>\n\
+         \t\t\t\t<field name=\"Name\">Scenes/UI/Gunrack/Shaders/Dx10_Single</field>\n\
+         \t\t\t\t<field name=\"Path\">ShaderRenderPath_Dx10</field>\n\
+         \t\t\t</complex>\n\
+         \t\t\t<complex>\n\
+         \t\t\t\t<field name=\"Name\">Scenes/UI/Gunrack/Shaders/Dx11_Single</field>\n\
+         \t\t\t\t<field name=\"Path\">ShaderRenderPath_Dx11</field>\n\
+         \t\t\t</complex>\n\
+         \t\t</array>\n\
+         \t</instance>\n\
+         </partition>\n"
+    ))
+}
+
+pub fn cmd_bfbc1_mainmenu(default_root: &Path, args: &[String]) -> Result<(), String> {
+    let opfor = flag_val(args, "--opfor").unwrap_or_else(|| default_root.to_path_buf());
+    let iso = flag_val(args, "--iso")
+        .ok_or("usage: opfor-cli bfbc1-mainmenu --iso <bfbc1.iso> --bfbc2 <bfbc2_dir> [--opfor <dir>]")?;
+    let bfbc2 = flag_val(args, "--bfbc2")
+        .ok_or("usage: opfor-cli bfbc1-mainmenu --iso <bfbc1.iso> --bfbc2 <bfbc2_dir> [--opfor <dir>]")?;
+    let xenolith = opfor.join("utility").join("xenolith.exe");
+    if !xenolith.is_file() {
+        return Err(format!("xenolith.exe not found at {}", xenolith.display()));
+    }
+
+    let idx = index_iso(&iso)?;
+    let &(off, sz) = idx
+        .files
+        .get("dist/xenon/menu/main/mainmenu-00.fbrb")
+        .ok_or("dist/xenon/menu/main/mainmenu-00.fbrb not found on BFBC1 ISO")?;
+
+    let pid = std::process::id();
+    let tmp_raw = std::env::temp_dir().join(format!("opfor_bc1_mm_raw_{pid}.fbrb"));
+    let tmp_port = std::env::temp_dir().join(format!("opfor_bc1_mm_port_{pid}.fbrb"));
+
+    {
+        let mut fp = File::open(&iso).map_err(|e| format!("open ISO: {e}"))?;
+        let mut out = File::create(&tmp_raw).map_err(|e| format!("create tmp: {e}"))?;
+        copy_iso_range(&mut fp, off, sz, &mut out)?;
+    }
+
+    let out_port = Command::new(&xenolith)
+        .args([
+            "port-fbrb",
+            "--bfbc1",
+            &tmp_raw.display().to_string(),
+            &tmp_port.display().to_string(),
+        ])
+        .output()
+        .map_err(|e| format!("run xenolith port-fbrb: {e}"))?;
+    let _ = fs::remove_file(&tmp_raw);
+    if !out_port.status.success() {
+        let _ = fs::remove_file(&tmp_port);
+        return Err(format!(
+            "xenolith port-fbrb mainmenu failed: {}",
+            String::from_utf8_lossy(&out_port.stderr)
+        ));
+    }
+
+    // Load PC Dx9/Dx10/Dx11 shader databases from BFBC2 donor level (mp_012gr)
+    let donor_lvl = bfbc2
+        .join("Dist")
+        .join("win32")
+        .join("levels")
+        .join("mp_012gr")
+        .join("level-00.fbrb");
+    let (_, donor_entries) = read_fbrb(&donor_lvl)?;
+    let mut pc_shaders: Vec<FbrbEntry> = Vec::new();
+    for (ext, target_name) in [
+        ("Dx9ShaderDatabase", "Scenes/UI/Gunrack/Shaders/Dx9_Single.res"),
+        ("Dx10ShaderDatabase", "Scenes/UI/Gunrack/Shaders/Dx10_Single.res"),
+        ("Dx11ShaderDatabase", "Scenes/UI/Gunrack/Shaders/Dx11_Single.res"),
+    ] {
+        if let Some(s) = donor_entries.iter().find(|e| e.ext == ext) {
+            pc_shaders.push(FbrbEntry {
+                name: target_name.to_owned(),
+                ext: s.ext.clone(),
+                flags: 0x0001_0000,
+                data: s.data.clone(),
+            });
+        }
+    }
+    if pc_shaders.len() != 3 {
+        let _ = fs::remove_file(&tmp_port);
+        return Err(format!(
+            "expected 3 PC shader databases in {}, found {}",
+            donor_lvl.display(),
+            pc_shaders.len()
+        ));
+    }
+
+    let (ver, entries) = read_fbrb(&tmp_port)?;
+    let _ = fs::remove_file(&tmp_port);
+
+    let mut out_entries = Vec::with_capacity(entries.len() + 3);
+    let mut stripped = 0usize;
+    let mut gunrack_rewritten = 0usize;
+    let p_in = std::env::temp_dir().join(format!("opfor_gr_in_{pid}.dbx"));
+    let p_xml = std::env::temp_dir().join(format!("opfor_gr_xml_{pid}.xml"));
+    let p_out = std::env::temp_dir().join(format!("opfor_gr_out_{pid}.dbx"));
+
+    for e in entries {
+        if matches!(
+            e.ext.as_str(),
+            "XenonVertexShader"
+                | "XenonPixelShader"
+                | "ShaderDatabase"
+                | "Dx9ShaderDatabase"
+                | "Dx10ShaderDatabase"
+                | "Dx11ShaderDatabase"
+        ) {
+            stripped += 1;
+            continue;
+        }
+        let nl = e.name.to_ascii_lowercase();
+        if nl.starts_with("scenes/ui/gunrack/") && nl.ends_with("/shaders.dbx") {
+            if fs::write(&p_in, &e.data).is_ok()
+                && Command::new(&xenolith)
+                    .args(["dbx-to-xml", &p_in.display().to_string(), &p_xml.display().to_string()])
+                    .output()
+                    .is_ok_and(|o| o.status.success())
+                && let Ok(xml) = fs::read_to_string(&p_xml)
+                && let Some(new_xml) = rewrite_gunrack_shaders_xml(&xml)
+                && fs::write(&p_xml, &new_xml).is_ok()
+                && Command::new(&xenolith)
+                    .args(["xml-to-dbx", &p_xml.display().to_string(), &p_out.display().to_string()])
+                    .output()
+                    .is_ok_and(|o| o.status.success())
+                && let Ok(new_dbx) = fs::read(&p_out)
+            {
+                out_entries.push(FbrbEntry {
+                    name: e.name,
+                    ext: e.ext,
+                    flags: e.flags,
+                    data: new_dbx,
+                });
+                gunrack_rewritten += 1;
+                continue;
+            }
+        }
+        out_entries.push(e);
+    }
+    let _ = fs::remove_file(&p_in);
+    let _ = fs::remove_file(&p_xml);
+    let _ = fs::remove_file(&p_out);
+
+    out_entries.extend(pc_shaders);
+    let dest = opfor
+        .join("modules")
+        .join("bfbc1")
+        .join("menu")
+        .join("main")
+        .join("mainmenu-00.fbrb");
+    if let Some(p) = dest.parent() {
+        fs::create_dir_all(p).map_err(|e| e.to_string())?;
+    }
+    write_fbrb(&dest, ver, &out_entries, true)?;
+    println!(
+        "[mainmenu] Wrote {} ({} entries, {} Gunrack scenes -> PC Dx9/10/11, stripped {} Xenon shaders)",
+        dest.display(),
+        out_entries.len(),
+        gunrack_rewritten,
+        stripped
     );
     Ok(())
 }

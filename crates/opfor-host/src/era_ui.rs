@@ -52,6 +52,8 @@ pub fn should_shim_mainmenu_fscommand(mode: ModeId, name: &str) -> bool {
                 | "refreshArray"
                 | "popupRequest"
                 | "requestFLEntry"
+                | "requestFLList"
+                | "requestLBList"
                 | "setFLListPageNr"
                 | "setLBListPageNr"
                 | "setGunrackWeapon"
@@ -62,6 +64,17 @@ pub fn should_shim_mainmenu_fscommand(mode: ModeId, name: &str) -> bool {
                 | "setServerFilter"
                 | "weaponUnlock"
                 | "mapCompletionName"
+                // Xbox 360 Guide / Live blades & storage overlays (dead on PC frostbite.bin)
+                | "showAchivementBlade"
+                | "showGamerCard"
+                | "inviteToCouch"
+                | "leaveCouch"
+                | "doJoinSquadReady"
+                | "redeemCode"
+                | "claimVeteran"
+                | "addFriend"
+                | "messages"
+                | "changeStorageDevice"
         ),
         ModeId::Bf1943 => matches!(
             name,
@@ -393,5 +406,30 @@ mod tests {
         assert_eq!(st.array_index, 5);
         assert_eq!(st.fl_page, 2);
         assert_eq!(st.lb_page, 4);
+    }
+
+    #[test]
+    fn shims_bfbc1_xbox_blades_and_storage_commands() {
+        for c in [
+            "showAchivementBlade",
+            "showGamerCard",
+            "inviteToCouch",
+            "leaveCouch",
+            "doJoinSquadReady",
+            "redeemCode",
+            "claimVeteran",
+            "addFriend",
+            "messages",
+            "requestFLList",
+            "requestLBList",
+            "changeStorageDevice",
+        ] {
+            assert!(
+                should_shim_mainmenu_fscommand(ModeId::Bfbc1, c),
+                "expected BFBC1 mainmenu shim for {c}"
+            );
+            assert!(!should_shim_mainmenu_fscommand(ModeId::Bf1943, c));
+            assert!(!should_shim_mainmenu_fscommand(ModeId::Bfbc2, c));
+        }
     }
 }
